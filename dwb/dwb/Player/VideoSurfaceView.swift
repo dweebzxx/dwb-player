@@ -88,14 +88,6 @@ class VideoSurfaceView: NSView {
         case 126:  // Up Arrow — volume up
             wc.volumeUp()
         default:
-            // Option-Q: secondary custom-prefix rename. Checked before noMods block.
-            let optionOnly = event.modifierFlags.intersection([.command, .control, .shift]).isEmpty
-                && event.modifierFlags.contains(.option)
-            if optionOnly, !event.isARepeat,
-               let chars = event.charactersIgnoringModifiers, chars == "q" {
-                wc.performSecondaryCustomPrefixRenameCurrentItem(source: "videoPage-optQ")
-                return
-            }
             // Character shortcuts — video player mode only, no modifier keys.
             // Cmd+1/2/3 go through the menu system before reaching here, so
             // plain 1/3 do not conflict with the Video > Fit/Stretch menu items.
@@ -115,14 +107,17 @@ class VideoSurfaceView: NSView {
                 case "9":
                     SettingsWindowController.setSkipDuration(180)
                     return
-                case "z":
+                case ",":
                     if !event.isARepeat { wc.playPrevious() }
                     return
-                case "x":
+                case ".":
                     if !event.isARepeat { wc.playNext() }
                     return
-                case "q":
-                    if !event.isARepeat { wc.performCustomPrefixRenameCurrentItem(source: "videoPage-Q") }
+                case "n":
+                    if !event.isARepeat { wc.performCustomPrefixRenameCurrentItem(source: "videoPage-N") }
+                    return
+                case "m":
+                    if !event.isARepeat { wc.performSecondaryCustomPrefixRenameCurrentItem(source: "videoPage-M") }
                     return
                 case "b":
                     if !event.isARepeat { wc.toggleBookmark() }

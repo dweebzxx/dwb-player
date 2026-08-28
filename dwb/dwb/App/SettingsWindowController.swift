@@ -734,7 +734,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         customPrefixValueTextField.placeholderString = "e.g. x_"
         customPrefixValueTextField.stringValue = Self.customPrefixValue()
         customPrefixValueTextField.delegate = self
-        customPrefixValueTextField.toolTip = "Primary prefix applied to filename stem. The Q key and prefix button use this prefix. The \"/\" character is not allowed."
+        customPrefixValueTextField.toolTip = "Primary prefix applied to filename stem. The N key and prefix button use this prefix. The \"/\" character is not allowed."
         customPrefixValueTextField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         customPrefixValueTextField.setAccessibilityIdentifier("settings.queue.primaryPrefix")
 
@@ -745,7 +745,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         customPrefixSecondaryValueTextField.placeholderString = "e.g. fav_"
         customPrefixSecondaryValueTextField.stringValue = Self.customPrefixSecondaryValue()
         customPrefixSecondaryValueTextField.delegate = self
-        customPrefixSecondaryValueTextField.toolTip = "Secondary prefix. Available from the rename menu and Option-Q. Leave empty to use one prefix only. The \"/\" character is not allowed."
+        customPrefixSecondaryValueTextField.toolTip = "Secondary prefix. Available from the rename menu and the M key. Leave empty to use one prefix only. The \"/\" character is not allowed."
         customPrefixSecondaryValueTextField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         customPrefixSecondaryValueTextField.setAccessibilityIdentifier("settings.queue.secondaryPrefix")
 
@@ -754,7 +754,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             buildRow(label: "Primary prefix", control: customPrefixValueTextField,
                      helperText: "Q and the prefix button apply this prefix. Format: prefix + filename stem + extension."),
             buildRow(label: "Secondary prefix", control: customPrefixSecondaryValueTextField,
-                     helperText: "Available from the rename menu and Option-Q. Leave empty to use one prefix only.")
+                     helperText: "Available from the rename menu and the M key. Leave empty to use one prefix only.")
         ])
 
         let section2 = buildSection(title: "Player controls", rows: [
@@ -971,11 +971,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             .init(title: "Forward by skip duration", shortcut: "→ / ⌥→"),
             .init(title: "Volume Up", shortcut: "↑ / ⌘↑"),
             .init(title: "Volume Down", shortcut: "↓ / ⌘↓"),
-            .init(title: "Previous Item", shortcut: "Z"),
-            .init(title: "Next Item", shortcut: "X"),
+            .init(title: "Previous Item", shortcut: ","),
+            .init(title: "Next Item", shortcut: "."),
             .init(title: "Bookmark Current Item", shortcut: "B"),
-            .init(title: "Primary Prefix Rename", shortcut: "Q"),
-            .init(title: "Secondary Prefix Rename", shortcut: "⌥Q"),
+            .init(title: "Primary Prefix Rename", shortcut: "N"),
+            .init(title: "Secondary Prefix Rename", shortcut: "M"),
             .init(title: "Shuffle", shortcut: "⌥⌘S"),
             .init(title: "Endless Shuffle", shortcut: "⌥⌘E"),
             .init(title: "Repeat One", shortcut: "⌥⌘R")

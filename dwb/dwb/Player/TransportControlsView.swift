@@ -251,7 +251,7 @@ final class TransportControlsView: NSView {
         dPrefixVideoPageButton.layer?.borderWidth     = 1
         dPrefixVideoPageButton.layer?.borderColor     = PrefixBrandColors.primaryCustomPrefixColor.withAlphaComponent(0.30).cgColor
         dPrefixVideoPageButton.contentTintColor       = PrefixBrandColors.primaryCustomPrefixColor.withAlphaComponent(0.92)
-        dPrefixVideoPageButton.toolTip = "Rename: apply custom prefix (Q)"
+        dPrefixVideoPageButton.toolTip = "Rename: apply custom prefix (N)"
         dPrefixVideoPageButton.setAccessibilityLabel("Apply custom prefix to current file")
         dPrefixVideoPageButton.title = "x_"
         dPrefixVideoPageButton.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)

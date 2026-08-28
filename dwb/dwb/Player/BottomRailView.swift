@@ -427,8 +427,8 @@ final class BottomRailView: NSView {
 
         configure(queueButton, symbol: "square.split.2x1", label: "Toggle Queue Page", help: "Toggle Queue Page", identifier: "player.rail.queue", action: #selector(queueTapped), style: .utility, size: 11)
         updatePrefixButtonLabels()
-        configure(dPrefixButton, symbol: nil, label: "Apply Primary Custom Prefix", help: "Rename: apply primary custom prefix (Q)", identifier: "player.rail.primaryPrefix", action: #selector(dPrefixTapped), style: .prefixPrimary, title: dPrefixButton.title, size: 11)
-        configure(secondaryPrefixButton, symbol: nil, label: "Apply Secondary Custom Prefix", help: "Rename: apply secondary custom prefix (Option-Q)", identifier: "player.rail.secondaryPrefix", action: #selector(secondaryPrefixTapped), style: .prefixSecondary, title: secondaryPrefixButton.title, size: 11)
+        configure(dPrefixButton, symbol: nil, label: "Apply Primary Custom Prefix", help: "Rename: apply primary custom prefix (N)", identifier: "player.rail.primaryPrefix", action: #selector(dPrefixTapped), style: .prefixPrimary, title: dPrefixButton.title, size: 11)
+        configure(secondaryPrefixButton, symbol: nil, label: "Apply Secondary Custom Prefix", help: "Rename: apply secondary custom prefix (M)", identifier: "player.rail.secondaryPrefix", action: #selector(secondaryPrefixTapped), style: .prefixSecondary, title: secondaryPrefixButton.title, size: 11)
         configure(rewindButton, symbol: "gobackward.10", label: "Rewind", help: "Rewind", identifier: "player.rail.rewind", action: #selector(rewindTapped), size: 13)
         configure(prevButton, symbol: "backward.end.fill", label: "Previous File", help: "Previous file (Z)", identifier: "player.rail.previous", action: #selector(prevTapped), size: 11)
         configure(playPauseButton, symbol: "play.fill", label: "Play or Pause", help: "Play / Pause (Space)", identifier: "player.rail.playPause", action: #selector(playPauseTapped), style: .emphasized, size: 15)

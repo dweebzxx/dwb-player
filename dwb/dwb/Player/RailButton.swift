@@ -54,7 +54,7 @@ enum PrefixBrandColors {
                                                     alpha: 1.0)
 }
 
-/// Compact keyboard-shortcut tag rendered beside a control (e.g. "Q" next to the
+/// Compact keyboard-shortcut tag rendered beside a control (e.g. "N" next to the
 /// custom prefix rename buttons). Decorative only: it never intercepts clicks and is hidden
 /// from accessibility — the shortcut is announced through the control's own
 /// help/tooltip text instead. Dark-theme styling matches the rail/footer chrome.

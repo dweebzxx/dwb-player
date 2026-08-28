@@ -257,10 +257,21 @@ class PlayerWindowController: NSWindowController {
         let sourceSessionID: Int
     }
 
+    private struct ExplicitPlayPauseIntent {
+        let target: ExplicitPlayPauseTarget
+        let mediaURL: URL?
+        let sessionID: Int
+    }
+
     private var scheduledPlaybackAction: DispatchWorkItem? = nil
     private var activeCompletionSequence: CompletionSequence? = nil
     private var playbackCompletionSequence = 0
     private var currentPlaybackSessionID = 0
+
+    /// Retained until VLCKit acknowledges an explicit resume, or until this
+    /// media session is reset. This prevents an explicit command's delayed
+    /// `.paused` callback from being reclassified as paused-near-EOF completion.
+    private var explicitPlayPauseIntent: ExplicitPlayPauseIntent? = nil
 
     private typealias PlaybackCommandAction = (@escaping () -> Void) -> Void
 
@@ -2307,9 +2318,24 @@ class PlayerWindowController: NSWindowController {
             }
             guard self.player.media != nil else { finish(); return }
             if self.player.isPlaying {
+                self.explicitPlayPauseIntent = .init(target: .pause,
+                                                      mediaURL: self.player.media?.url,
+                                                      sessionID: self.currentPlaybackSessionID)
                 DebugConsoleController.log("playback", "pause: source=button")
                 self.player.pause()
             } else {
+                self.explicitPlayPauseIntent = .init(target: .play,
+                                                      mediaURL: self.player.media?.url,
+                                                      sessionID: self.currentPlaybackSessionID)
+                let hasPendingPausedNearEOFCompletion = self.activeCompletionSequence?.source == "paused-near-eof"
+                if ExplicitPlayPauseCompletionPolicy.shouldCancelPendingPausedNearEOFCompletion(
+                    for: .play,
+                    naturalEOFDetected: self.naturalEOFDetected,
+                    hasPendingPausedNearEOFCompletion: hasPendingPausedNearEOFCompletion
+                ) {
+                    self.cancelScheduledPlaybackAction(reason: "explicit-play-resume")
+                    self.clearCompletionSequence(reason: "explicit-play-resume")
+                }
                 DebugConsoleController.log("playback", "play: source=button")
                 self.player.play()
             }
@@ -2559,6 +2585,7 @@ class PlayerWindowController: NSWindowController {
         lastStoppedMT = 0
         lastStoppedPosition = 0
         lastStoppedMediaURL = nil
+        explicitPlayPauseIntent = nil
     }
 
     private func clearStoppedSuppression() {
@@ -3399,6 +3426,9 @@ class PlayerWindowController: NSWindowController {
         }()
         let pausedNearEOF = !isUserStop
             && !recentSeek
+            && !ExplicitPlayPauseCompletionPolicy.suppressesPausedNearEOFCompletion(
+                for: explicitPlayPauseIntent?.target
+            )
             && currentState == .paused
             && (sampledPosition >= pausedNearEOFPositionThreshold
                 || remainingMs <= pausedNearEOFRemainingMs)
@@ -4160,6 +4190,12 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
             #endif
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                if let intent = self.explicitPlayPauseIntent,
+                   intent.target == .play,
+                   intent.sessionID == self.currentPlaybackSessionID,
+                   intent.mediaURL?.path == capturedMediaURL?.path {
+                    self.explicitPlayPauseIntent = nil
+                }
                 self.updatePlaybackProgressSnapshot(position: capturedPosition)
                 if !self.currentItemIsImage {
                     self.acquirePlaybackSleepAssertion(reason: "Video playback")

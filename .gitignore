@@ -98,3 +98,6 @@ assets/
 dwb/dwbTests/
 scripts/test.sh
 .github/workflows/
+
+# Host Workflow Operator assets
+/assets/
