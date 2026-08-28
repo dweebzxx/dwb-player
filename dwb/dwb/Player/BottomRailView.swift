@@ -455,7 +455,7 @@ final class BottomRailView: NSView {
         // Draw the scrubber bar at the very top of the slider frame so the bar
         // visually reads as the top edge of the rail veil (no transparent strip
         // above the scrubber). Hit testing remains the full slider frame.
-        scrubber.cell = TopAlignedKnoblessSliderCell()
+        scrubber.cell = TopAlignedSliderCell()
         scrubber.minValue = 0
         scrubber.maxValue = 1
         scrubber.doubleValue = 0
@@ -800,7 +800,7 @@ fileprivate enum MoreMenuAction {
     case customPrefix, customPrefixSecondary, shuffle, replay, bookmark, settings
 }
 
-// MARK: - Top-aligned knobless slider cell
+// MARK: - Top-aligned slider cell
 
 /// Variant of the legacy KnoblessSliderCell that draws the track and progress
 /// fill flush with the absolute top pixel of the slider control (the scrubber
@@ -811,34 +811,48 @@ fileprivate enum MoreMenuAction {
 /// the scrubber so its top edge aligns with the rail veil's top edge, making
 /// the visible scrubber bar literally the topmost visible pixel of the shaded
 /// playback control bar. Click-to-seek and drag-to-seek remain functional
-/// because the slider frame is the full hit-test area.
-fileprivate final class TopAlignedKnoblessSliderCell: NSSliderCell {
-    override func drawKnob(_ knobRect: NSRect) {}
+/// because the slider frame is the full hit-test area. A compact custom knob
+/// remains centered on the same AppKit geometry as input tracking.
+fileprivate final class TopAlignedSliderCell: NSSliderCell {
+
+    override func drawKnob(_ knobRect: NSRect) {
+        let fullRect = controlView?.bounds ?? knobRect
+        let trackRect = topAlignedBarRect(in: fullRect, flipped: controlView?.isFlipped ?? false)
+        let visibleKnob = ScrubberTrackGeometry.visibleKnobRect(
+            trackRect: trackRect,
+            knobRect: knobRect
+        )
+
+        NSColor.white.withAlphaComponent(0.88).setFill()
+        NSBezierPath(ovalIn: visibleKnob).fill()
+    }
 
     override func drawBar(inside rect: NSRect, flipped: Bool) {
-        let h: CGFloat = 3
         // Use the control view's full bounds to avoid any system inset that
         // would leave a visible shaded strip above the scrubber bar.
         let fullRect = controlView?.bounds ?? rect
-        let barY: CGFloat
-        if flipped {
-            barY = fullRect.minY
-        } else {
-            barY = fullRect.maxY - h
-        }
-        let barRect = NSRect(x: fullRect.minX, y: barY, width: fullRect.width, height: h)
+        let barRect = topAlignedBarRect(in: fullRect, flipped: flipped)
 
         NSColor.white.withAlphaComponent(0.15).setFill()
         NSBezierPath(roundedRect: barRect, xRadius: 1, yRadius: 1).fill()
 
-        let range = maxValue - minValue
-        if range > 0 {
-            let frac    = CGFloat((doubleValue - minValue) / range)
-            let filledW = max(0, barRect.width * frac)
-            let filled  = NSRect(x: barRect.minX, y: barRect.minY,
-                                 width: filledW,  height: barRect.height)
+        if maxValue > minValue {
+            // AppKit maps track clicks to the knob's travel range, which
+            // is inset from the visible bar by half the knob width. Use that
+            // exact knob center for the visual endpoint so the click target,
+            // value, and rendered progress position share one geometry.
+            let filled = ScrubberTrackGeometry.progressFillRect(
+                trackRect: barRect,
+                knobRect: knobRect(flipped: flipped)
+            )
             NSColor.white.withAlphaComponent(0.72).setFill()
             NSBezierPath(roundedRect: filled, xRadius: 1, yRadius: 1).fill()
         }
+    }
+
+    private func topAlignedBarRect(in fullRect: NSRect, flipped: Bool) -> NSRect {
+        let height: CGFloat = 3
+        let y = flipped ? fullRect.minY : fullRect.maxY - height
+        return NSRect(x: fullRect.minX, y: y, width: fullRect.width, height: height)
     }
 }

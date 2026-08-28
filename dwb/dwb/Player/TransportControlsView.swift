@@ -75,6 +75,7 @@ final class TransportControlsView: NSView {
     )
 
     var isUsingUnifiedBottomRail: Bool { useUnifiedBottomRail }
+    var unifiedBottomRailHeight: CGFloat { isFullscreenStyle ? 80 : 84 }
 
     // MARK: - Image mode state (set by PlayerWindowController for slideshow items)
     var isImageMode: Bool = false {
@@ -509,8 +510,10 @@ final class TransportControlsView: NSView {
     private func performLayout() {
         refreshUnifiedBottomRailMode()
         if useUnifiedBottomRail {
-            let railH: CGFloat = isFullscreenStyle ? 80 : 84
-            bottomRail.frame = NSRect(x: 0, y: 0, width: bounds.width, height: railH)
+            bottomRail.frame = NSRect(x: 0,
+                                      y: 0,
+                                      width: bounds.width,
+                                      height: unifiedBottomRailHeight)
             return
         }
 

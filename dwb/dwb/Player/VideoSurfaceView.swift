@@ -21,13 +21,13 @@ private enum MediaDropRouting {
     static func performDrop(_ sender: NSDraggingInfo, in window: NSWindow?) -> Bool {
         guard let urls = readDroppedURLs(from: sender),
               let wc = window?.windowController as? PlayerWindowController else { return false }
-        wc.handleDroppedURLs(urls, appendingExplicitFiles: true)
+        wc.handleDroppedURLs(urls, appendingExplicitFiles: true, isDragDrop: true)
         return true
     }
 }
 
 /// The NSView into which VLCMediaPlayer renders its video output.
-/// Background is black. Scroll wheel adjusts volume (0–150), clamped.
+/// Background is black. Scroll wheel adjusts volume (0–200), clamped.
 /// Double-click toggles fullscreen. Accepts file/folder drops (single or multi).
 /// Space / Left / Right arrow keys drive transport when this view is first responder.
 class VideoSurfaceView: NSView {

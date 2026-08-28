@@ -199,7 +199,7 @@ class PlayerWindowController: NSWindowController {
     private var folderScanGeneration: UInt64 = 0
     private var folderScanTask: Task<Void, Never>?
     private enum IntakeRecoveryRetryContext {
-        case intake(urls: [URL], appendingExplicitFiles: Bool)
+        case intake(urls: [URL], appendingExplicitFiles: Bool, isDragDrop: Bool)
         case rescan(folders: [URL])
     }
     private var intakeRecoveryRetryContext: IntakeRecoveryRetryContext?
@@ -954,15 +954,19 @@ class PlayerWindowController: NSWindowController {
             }
         }
 
-        // Volume bar: right side, vertically centred in the video area.
-        let barW: CGFloat = 52
-        let barH: CGFloat = 186
-        let barX = transport.frame.maxX - barW - 12
-        let videoAreaBottom: CGFloat = 0
-        let videoAreaH = b.height
-        let barY = (videoAreaH - barH) / 2
+        // Volume HUD: centered directly above the unified rail's scrubber.
+        let barW = VolumeBarView.preferredSize.width
+        let barH = VolumeBarView.preferredSize.height
+        let centeredBarX = transport.frame.midX - barW / 2
+        let barX = min(
+            max(transport.frame.minX, centeredBarX),
+            max(transport.frame.minX, transport.frame.maxX - barW)
+        )
+        let scrubberTop = transport.frame.minY + transport.unifiedBottomRailHeight
+        let desiredBarY = scrubberTop + 10
+        let barY = min(max(0, desiredBarY), max(0, b.height - barH - 12))
         volumeBar.frame = NSRect(x: barX,
-                                 y: max(videoAreaBottom, barY),
+                                 y: barY,
                                  width: barW,
                                  height: barH)
 
@@ -1072,15 +1076,21 @@ class PlayerWindowController: NSWindowController {
 
     // MARK: - Playback set management
 
-    /// Replace this window's playback set and immediately play the first item.
-    private func openAndPlay(set: [URL]) {
+    /// Replace this window's playback set and immediately play the selected item.
+    /// Folder drag/drop can request a randomized start without changing other
+    /// explicit-open behavior.
+    private func openAndPlay(set: [URL], randomizeShuffleStart: Bool = false) {
         guard !set.isEmpty else { return }
         DebugConsoleController.log("queue", "openReplace: count=\(set.count)")
         playbackSet     = set
         displayOrder    = Array(0..<set.count)
         currentDisplayIndex = 0
         if isShuffleOn {
-            applyShuffleKeepingCurrent()
+            if randomizeShuffleStart {
+                applyShuffleWithRandomStart()
+            } else {
+                applyShuffleKeepingCurrent()
+            }
         } else {
             applyQueueSortIfNeeded(reason: "open-replace", refreshUI: false)
         }
@@ -1088,8 +1098,9 @@ class PlayerWindowController: NSWindowController {
     }
 
     /// Insert explicit dropped files at the top of this window's existing queue
-    /// without replacing the queue. The first inserted item becomes active immediately.
-    private func appendToQueue(files: [URL]) {
+    /// without replacing the queue. The first inserted item becomes active unless
+    /// a folder drag/drop explicitly requests a randomized Shuffle start.
+    private func appendToQueue(files: [URL], randomizeShuffleStart: Bool = false) {
         guard !files.isEmpty else { return }
         let wasEmpty = playbackSet.isEmpty || displayOrder.isEmpty || currentDisplayIndex < 0
         let start = playbackSet.count
@@ -1108,7 +1119,9 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("queue", "add: count=\(files.count) wasEmpty=\(wasEmpty) files=\(files.map(\.lastPathComponent).prefix(3).joined(separator: ","))")
 
         currentDisplayIndex = 0
-        if !isShuffleOn {
+        if randomizeShuffleStart && isShuffleOn {
+            applyShuffleWithRandomStart()
+        } else if !isShuffleOn {
             applyQueueSortIfNeeded(reason: "queue-top-insert", refreshUI: false)
         }
         if wasEmpty {
@@ -1190,6 +1203,48 @@ class PlayerWindowController: NSWindowController {
         logPlaybackQueueSnapshot("toggleShuffle")
     }
 
+    /// Selects ordinary Shuffle directly, without advancing the user-facing
+    /// Off → Shuffle → Endless → Off cycle. Folder drag/drop uses this after a
+    /// successful intake so it can never accidentally select Endless Shuffle.
+    private func setShuffleModeForFolderDrop() {
+        guard !isShuffleOn || isEndlessShuffleOn else { return }
+        isShuffleOn = true
+        isEndlessShuffleOn = false
+        queueSortMode = .manual
+        applyShuffleKeepingCurrent()
+        DebugConsoleController.log("playback", "shuffle: on=true endless=false source=folder-drop")
+    }
+
+    /// Selects the direct Folder-drop Shuffle mode before queue mutation and
+    /// reports the randomized-start scope for this successful intake.
+    private func prepareFolderDropShuffleIfNeeded(isDragDrop: Bool,
+                                                  containsFolder: Bool,
+                                                  addedPlayableMedia: Bool,
+                                                  queueWasEmpty: Bool) -> FolderDropShuffleStartScope {
+        let currentMode: FolderDropShuffleMode
+        if isEndlessShuffleOn {
+            currentMode = .endless
+        } else if isShuffleOn {
+            currentMode = .shuffle
+        } else {
+            currentMode = .off
+        }
+
+        guard FolderDropShufflePolicy.resultingMode(
+            currentMode: currentMode,
+            isDragDrop: isDragDrop,
+            containsFolder: containsFolder,
+            addedPlayableMedia: addedPlayableMedia
+        ) == .shuffle else { return .none }
+        setShuffleModeForFolderDrop()
+        return FolderDropShuffleStartPolicy.scope(
+            isDragDrop: isDragDrop,
+            containsFolder: containsFolder,
+            addedPlayableMedia: addedPlayableMedia,
+            queueWasEmpty: queueWasEmpty
+        )
+    }
+
     /// Shuffle the playback set, keeping the currently playing item at position 0
     /// of the new traversal (already-played context is lost intentionally).
     private func applyShuffleKeepingCurrent() {
@@ -1201,6 +1256,13 @@ class PlayerWindowController: NSWindowController {
             indices.insert(curPBIdx, at: 0)
         }
         displayOrder = indices
+        currentDisplayIndex = 0
+    }
+
+    /// Shuffle the full playback set without preserving the previous current
+    /// item, so a successful folder drop can begin at a random accepted item.
+    private func applyShuffleWithRandomStart() {
+        displayOrder = Array(0..<playbackSet.count).shuffled()
         currentDisplayIndex = 0
     }
 
@@ -1801,8 +1863,12 @@ class PlayerWindowController: NSWindowController {
             SettingsWindowController.shared.openAcceptSettings()
         case .retryRescan:
             switch intakeRecoveryRetryContext {
-            case .intake(let urls, let appendingExplicitFiles):
-                handleDroppedURLs(urls, appendingExplicitFiles: appendingExplicitFiles)
+            case .intake(let urls, let appendingExplicitFiles, let isDragDrop):
+                handleDroppedURLs(
+                    urls,
+                    appendingExplicitFiles: appendingExplicitFiles,
+                    isDragDrop: isDragDrop
+                )
             case .rescan(let folders):
                 guard !folders.isEmpty else {
                     locateRecoverySource()
@@ -1834,8 +1900,12 @@ class PlayerWindowController: NSWindowController {
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
 
         switch intakeRecoveryRetryContext {
-        case .intake(_, let appendingExplicitFiles):
-            handleDroppedURLs(panel.urls, appendingExplicitFiles: appendingExplicitFiles)
+        case .intake(_, let appendingExplicitFiles, let isDragDrop):
+            handleDroppedURLs(
+                panel.urls,
+                appendingExplicitFiles: appendingExplicitFiles,
+                isDragDrop: isDragDrop
+            )
         case .rescan, .none:
             sourceFolderURLs = panel.urls
             startAsyncFolderRescan(
@@ -1845,7 +1915,9 @@ class PlayerWindowController: NSWindowController {
         }
     }
 
-    func handleDroppedURLs(_ urls: [URL], appendingExplicitFiles: Bool = true) {
+    func handleDroppedURLs(_ urls: [URL],
+                           appendingExplicitFiles: Bool = true,
+                           isDragDrop: Bool = false) {
         guard !urls.isEmpty else { return }
 
         let unavailable = urls.filter { !FileManager.default.fileExists(atPath: $0.path) }
@@ -1856,7 +1928,11 @@ class PlayerWindowController: NSWindowController {
                     diagnostic: "The selected local source no longer exists or is unavailable at \(missing.path)."
                 ),
                 sourceURLs: urls,
-                retryContext: .intake(urls: urls, appendingExplicitFiles: appendingExplicitFiles)
+                retryContext: .intake(
+                    urls: urls,
+                    appendingExplicitFiles: appendingExplicitFiles,
+                    isDragDrop: isDragDrop
+                )
             )
             return
         }
@@ -1878,7 +1954,8 @@ class PlayerWindowController: NSWindowController {
             applyExpandedMediaIntake(result: result,
                                      dirs: dirs,
                                      sourceURLs: urls,
-                                     appendingExplicitFiles: appendingExplicitFiles)
+                                     appendingExplicitFiles: appendingExplicitFiles,
+                                     isDragDrop: isDragDrop)
             return
         }
 
@@ -1887,7 +1964,11 @@ class PlayerWindowController: NSWindowController {
         if !dirs.isEmpty && files.isEmpty {
             if dirs.count == 1 {
                 let folder = dirs[0]
-                startAsyncSingleFolderIntake(folder: folder, acceptedKinds: acceptedKinds)
+                startAsyncSingleFolderIntake(
+                    folder: folder,
+                    acceptedKinds: acceptedKinds,
+                    isDragDrop: isDragDrop
+                )
                 return
             }
         }
@@ -1900,16 +1981,22 @@ class PlayerWindowController: NSWindowController {
         startAsyncExpandedMediaIntake(urls: urls,
                                       dirs: dirs,
                                       appendingExplicitFiles: appendingExplicitFiles,
+                                      isDragDrop: isDragDrop,
                                       acceptedKinds: acceptedKinds)
     }
 
     private func startAsyncSingleFolderIntake(folder: URL,
-                                             acceptedKinds: Set<MediaFileSupport.MediaKind>) {
+                                             acceptedKinds: Set<MediaFileSupport.MediaKind>,
+                                             isDragDrop: Bool) {
         let generation = beginFolderScanOperation()
         presentIntakeScanning(
             folderCount: 1,
             sourceURLs: [folder],
-            retryContext: .intake(urls: [folder], appendingExplicitFiles: true)
+            retryContext: .intake(
+                urls: [folder],
+                appendingExplicitFiles: true,
+                isDragDrop: isDragDrop
+            )
         )
         DebugConsoleController.log("queue", "expandAsync: start singleFolder=\(folder.lastPathComponent)")
 
@@ -1924,7 +2011,11 @@ class PlayerWindowController: NSWindowController {
                 await MainActor.run {
                     guard let self, self.folderScanGeneration == generation else { return }
                     self.folderScanTask = nil
-                    self.applySingleFolderIntake(folder: folder, result: result)
+                    self.applySingleFolderIntake(
+                        folder: folder,
+                        result: result,
+                        isDragDrop: isDragDrop
+                    )
                 }
             } catch is CancellationError {
                 return
@@ -1941,7 +2032,11 @@ class PlayerWindowController: NSWindowController {
                     self.presentIntakeFailure(
                         failure,
                         sourceURLs: [folder],
-                        retryContext: .intake(urls: [folder], appendingExplicitFiles: true)
+                        retryContext: .intake(
+                            urls: [folder],
+                            appendingExplicitFiles: true,
+                            isDragDrop: isDragDrop
+                        )
                     )
                 }
             }
@@ -1951,12 +2046,17 @@ class PlayerWindowController: NSWindowController {
     private func startAsyncExpandedMediaIntake(urls: [URL],
                                                dirs: [URL],
                                                appendingExplicitFiles: Bool,
+                                               isDragDrop: Bool,
                                                acceptedKinds: Set<MediaFileSupport.MediaKind>) {
         let generation = beginFolderScanOperation()
         presentIntakeScanning(
             folderCount: dirs.count,
             sourceURLs: urls,
-            retryContext: .intake(urls: urls, appendingExplicitFiles: appendingExplicitFiles)
+            retryContext: .intake(
+                urls: urls,
+                appendingExplicitFiles: appendingExplicitFiles,
+                isDragDrop: isDragDrop
+            )
         )
         DebugConsoleController.log("queue", "expandAsync: start urls=\(urls.count) folders=\(dirs.count)")
 
@@ -1974,7 +2074,8 @@ class PlayerWindowController: NSWindowController {
                     self.applyExpandedMediaIntake(result: result,
                                                   dirs: dirs,
                                                   sourceURLs: urls,
-                                                  appendingExplicitFiles: appendingExplicitFiles)
+                                                  appendingExplicitFiles: appendingExplicitFiles,
+                                                  isDragDrop: isDragDrop)
                 }
             } catch is CancellationError {
                 return
@@ -1988,7 +2089,11 @@ class PlayerWindowController: NSWindowController {
                     self.presentIntakeFailure(
                         .folderScanFailed(name: nil, diagnostic: error.localizedDescription),
                         sourceURLs: dirs,
-                        retryContext: .intake(urls: urls, appendingExplicitFiles: appendingExplicitFiles)
+                        retryContext: .intake(
+                            urls: urls,
+                            appendingExplicitFiles: appendingExplicitFiles,
+                            isDragDrop: isDragDrop
+                        )
                     )
                 }
             }
@@ -1996,12 +2101,17 @@ class PlayerWindowController: NSWindowController {
     }
 
     private func applySingleFolderIntake(folder: URL,
-                                         result: MediaFileSupport.ExpansionResult) {
+                                         result: MediaFileSupport.ExpansionResult,
+                                         isDragDrop: Bool) {
         guard !result.media.isEmpty else {
             showEmptyIntakeMessage(
                 result: result,
                 sourceURLs: [folder],
-                retryContext: .intake(urls: [folder], appendingExplicitFiles: true),
+                retryContext: .intake(
+                    urls: [folder],
+                    appendingExplicitFiles: true,
+                    isDragDrop: isDragDrop
+                ),
                 emptyFolderNames: [folder.lastPathComponent]
             )
             return
@@ -2010,19 +2120,31 @@ class PlayerWindowController: NSWindowController {
         clearIntakeRecovery()
 
         let queueEmpty = playbackSet.isEmpty || displayOrder.isEmpty
+        let shuffleStartScope = prepareFolderDropShuffleIfNeeded(
+            isDragDrop: isDragDrop,
+            containsFolder: true,
+            addedPlayableMedia: true,
+            queueWasEmpty: queueEmpty
+        )
+        let randomizeShuffleStart = shuffleStartScope != .none
         if queueEmpty {
             sourceFolderURLs = [folder]
-            openAndPlay(set: result.media)
+            openAndPlay(set: result.media, randomizeShuffleStart: randomizeShuffleStart)
         } else {
             trackSourceFolder(folder)
-            appendToQueue(files: result.media)
+            appendToQueue(files: result.media, randomizeShuffleStart: randomizeShuffleStart)
+        }
+        if randomizeShuffleStart {
+            refreshQueueDisplays()
+            logPlaybackQueueSnapshot("folderDropShuffle")
         }
     }
 
     private func applyExpandedMediaIntake(result: MediaFileSupport.ExpansionResult,
                                           dirs: [URL],
                                           sourceURLs: [URL],
-                                          appendingExplicitFiles: Bool) {
+                                          appendingExplicitFiles: Bool,
+                                          isDragDrop: Bool) {
         let expanded = result.media
         let emptyFolders = result.emptyFolderNames
 
@@ -2031,19 +2153,31 @@ class PlayerWindowController: NSWindowController {
                 showEmptyIntakeMessage(
                     result: result,
                     sourceURLs: sourceURLs,
-                    retryContext: .intake(urls: sourceURLs, appendingExplicitFiles: appendingExplicitFiles)
+                    retryContext: .intake(
+                        urls: sourceURLs,
+                        appendingExplicitFiles: appendingExplicitFiles,
+                        isDragDrop: isDragDrop
+                    )
                 )
             } else if !emptyFolders.isEmpty {
                 presentIntakeFailure(
                     .emptyFolders(names: emptyFolders),
                     sourceURLs: sourceURLs,
-                    retryContext: .intake(urls: sourceURLs, appendingExplicitFiles: appendingExplicitFiles)
+                    retryContext: .intake(
+                        urls: sourceURLs,
+                        appendingExplicitFiles: appendingExplicitFiles,
+                        isDragDrop: isDragDrop
+                    )
                 )
             } else {
                 presentIntakeFailure(
                     .unsupportedFiles(supportedExtensions: MediaFileSupport.supportedExtensions.sorted()),
                     sourceURLs: sourceURLs,
-                    retryContext: .intake(urls: sourceURLs, appendingExplicitFiles: appendingExplicitFiles)
+                    retryContext: .intake(
+                        urls: sourceURLs,
+                        appendingExplicitFiles: appendingExplicitFiles,
+                        isDragDrop: isDragDrop
+                    )
                 )
             }
             return
@@ -2057,12 +2191,24 @@ class PlayerWindowController: NSWindowController {
             DebugConsoleController.log("queue", "expand: count=\(expanded.count)")
         }
 
+        let queueWasEmpty = playbackSet.isEmpty || displayOrder.isEmpty
+        let shuffleStartScope = prepareFolderDropShuffleIfNeeded(
+            isDragDrop: isDragDrop,
+            containsFolder: !dirs.isEmpty,
+            addedPlayableMedia: true,
+            queueWasEmpty: queueWasEmpty
+        )
+        let randomizeShuffleStart = shuffleStartScope != .none
         if appendingExplicitFiles {
             for dir in dirs { trackSourceFolder(dir) }
-            appendToQueue(files: expanded)
+            appendToQueue(files: expanded, randomizeShuffleStart: randomizeShuffleStart)
         } else {
             sourceFolderURLs = dirs
-            openAndPlay(set: expanded)
+            openAndPlay(set: expanded, randomizeShuffleStart: randomizeShuffleStart)
+        }
+        if randomizeShuffleStart {
+            refreshQueueDisplays()
+            logPlaybackQueueSnapshot("folderDropShuffle")
         }
     }
 
@@ -3351,7 +3497,7 @@ class PlayerWindowController: NSWindowController {
     private static func defaultPersistedVolume() -> Int32 {
         let key = SettingsWindowController.persistedVolumeKey
         guard UserDefaults.standard.object(forKey: key) != nil else { return 100 }
-        return Int32(max(0, min(150, UserDefaults.standard.integer(forKey: key))))
+        return VolumePolicy.clamped(UserDefaults.standard.integer(forKey: key))
     }
 
     private var audioStateDescription: String {
@@ -3359,12 +3505,12 @@ class PlayerWindowController: NSWindowController {
     }
 
     private func persistVolume(_ volume: Int32) {
-        UserDefaults.standard.set(Int(max(0, min(150, volume))), forKey: SettingsWindowController.persistedVolumeKey)
+        UserDefaults.standard.set(Int(VolumePolicy.clamped(volume)), forKey: SettingsWindowController.persistedVolumeKey)
     }
 
     @discardableResult
     private func applyWindowAudioState(reason: String, force: Bool = false) -> (volume: Int32, muted: Bool) {
-        let clampedVolume = Int32(max(0, min(150, Int(windowVolume))))
+        let clampedVolume = VolumePolicy.clamped(windowVolume)
         if clampedVolume != windowVolume {
             windowVolume = clampedVolume
         }
@@ -3392,7 +3538,7 @@ class PlayerWindowController: NSWindowController {
     func adjustVolume(by delta: Int) {
         let oldVol = windowVolume
         let wasMuted = windowMuted
-        let newVol = Int32(max(0, min(150, Int(windowVolume) + delta)))
+        let newVol = VolumePolicy.clamped(Int(windowVolume) + delta)
         windowVolume = newVol
         if newVol > 0 { windowMuted = false }
         DebugConsoleController.log("audio", "volumeChange: window=\(debugIdentity) old=\(oldVol) new=\(newVol) wasMuted=\(wasMuted) muted=\(windowMuted)")
@@ -3404,7 +3550,7 @@ class PlayerWindowController: NSWindowController {
     func setVolumeFromBar(_ vol: Int32) {
         let oldVol = windowVolume
         let wasMuted = windowMuted
-        let newVol = Int32(max(0, min(150, Int(vol))))
+        let newVol = VolumePolicy.clamped(vol)
         windowVolume = newVol
         windowMuted = newVol == 0
         DebugConsoleController.log("audio", "volumeSet: window=\(debugIdentity) old=\(oldVol) new=\(newVol) wasMuted=\(wasMuted) muted=\(windowMuted)")

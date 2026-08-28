@@ -1,208 +1,139 @@
 import Cocoa
 
-/// Interactive vertical volume bar overlay shown on the right side of the player.
-/// Appears transiently when volume changes (scroll, buttons, or direct interaction).
-/// Supports click-to-set and drag-to-adjust.  Normal range (0–100) rendered in white;
-/// extended software gain (101–150) rendered in orange with a visible divider at 100.
+/// Interactive segmented-volume HUD shown transiently when this player window's
+/// volume changes. It preserves click/drag adjustment and the 0–200
+/// software-gain range while presenting a compact horizontal meter.
 final class VolumeBarView: NSView {
 
-    // MARK: - Geometry constants
-    // These define the track within the view.  View size is set by PlayerWindowController.
-    // Suite-standard volume HUD geometry — keep in sync with dwb skim VolumeBarView.
-    private let trackX: CGFloat     = 38    // left edge of the bar track
-    private let trackY: CGFloat     = 22    // bottom of the bar track (vol = 0)
-    private let trackW: CGFloat     = 8     // bar width
-    private let trackH: CGFloat     = 140   // bar height (vol = 150 at top)
-    private let labelX: CGFloat     = 4     // left edge of tick labels
-    private let labelW: CGFloat     = 30    // width of tick labels
+    static let preferredSize = NSSize(width: Metrics.preferredWidth, height: 48)
 
-    // Derived: y-coordinate of the vol=100 boundary within the view
-    private var dividerY: CGFloat { trackY + trackH * 100.0 / 150.0 }
+    private enum Metrics {
+        static let cornerRadius: CGFloat = 10
+        static let iconX: CGFloat = 16
+        static let iconWidth: CGFloat = 18
+        static let meterX: CGFloat = 49
+        static let segmentWidth: CGFloat = 6
+        static let segmentGap: CGFloat = 3
+        static let segmentHeight: CGFloat = 8
+        static let normalSegmentCount = 7
+        static let extendedSegmentCount = 4
+        static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 16, weight: .bold)
+        static let valueLeadingGap: CGFloat = 10
+        static let valueTrailingInset: CGFloat = 12
+        static let valueWidth = ceil(
+            ("\(VolumePolicy.maximumVolume)%" as NSString)
+                .size(withAttributes: [.font: valueFont]).width
+        ) + 4
 
-    // MARK: - Layers
-    private let trackBgLayer     = CALayer()
-    private let normalFillLayer  = CALayer()
-    private let extFillLayer     = CALayer()
-    private let dividerLineLayer = CALayer()
+        static var segmentCount: Int { normalSegmentCount + extendedSegmentCount }
+        static var meterWidth: CGFloat {
+            CGFloat(segmentCount) * segmentWidth + CGFloat(segmentCount - 1) * segmentGap
+        }
+        static var preferredWidth: CGFloat {
+            meterX + meterWidth + valueLeadingGap + valueWidth + valueTrailingInset
+        }
+    }
 
-    // MARK: - Labels (visible only while bar is exposed)
-    private let valueLabel = VolumeBarView.valueLabel()
-    private let label0   = VolumeBarView.tickLabel("0")
-    private let label100 = VolumeBarView.tickLabel("100")
-    private let label150 = VolumeBarView.tickLabel("150")
+    private let speakerImageView = NSImageView()
+    private let valueLabel = VolumeBarView.makeValueLabel()
 
-    // MARK: - State
     private(set) var currentVolume: Int32 = 100
-    private var isDragging  = false
+    private var isDragging = false
     private var hideTimer: Timer?
 
-    /// Called when the user adjusts volume by clicking or dragging the bar.
+    /// Called when the user adjusts volume by clicking or dragging the meter.
     var onVolumeChanged: ((Int32) -> Void)?
-
-    // MARK: - Init
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        setupBackground()
-        setupTrackLayers()
-        setupLabels()
+        layer?.backgroundColor = NSColor(calibratedWhite: 0.085, alpha: 0.94).cgColor
+        layer?.cornerRadius = Metrics.cornerRadius
+        layer?.masksToBounds = true
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
+
+        configureSpeakerImageView()
+        addSubview(speakerImageView)
+        addSubview(valueLabel)
+        setAccessibilityRole(.slider)
+        setAccessibilityLabel("Volume")
+        setAccessibilityHelp("Click or drag the level meter to adjust volume")
+        updatePresentation()
         alphaValue = 0
-        isHidden   = true
+        isHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    // MARK: - Layer setup
-
-    private func setupBackground() {
-        guard let root = layer else { return }
-        root.backgroundColor = NSColor.black.withAlphaComponent(0.72).cgColor
-        root.cornerRadius = 9
-        root.masksToBounds = true
-        // Suite-standard 1.0px hairline on HUD surfaces (matches transport chrome).
-        root.borderWidth = 1.0
-        root.borderColor = NSColor.white.withAlphaComponent(0.08).cgColor
-    }
-
-    private func setupTrackLayers() {
-        guard let root = layer else { return }
-
-        trackBgLayer.backgroundColor = NSColor.white.withAlphaComponent(0.14).cgColor
-        trackBgLayer.cornerRadius = 3
-        root.addSublayer(trackBgLayer)
-
-        normalFillLayer.backgroundColor = NSColor.white.withAlphaComponent(0.88).cgColor
-        normalFillLayer.cornerRadius = 3
-        root.addSublayer(normalFillLayer)
-
-        extFillLayer.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.88).cgColor
-        extFillLayer.cornerRadius = 3
-        root.addSublayer(extFillLayer)
-
-        // Horizontal divider line at the vol=100 boundary, visible when extended gain is active
-        dividerLineLayer.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.65).cgColor
-        dividerLineLayer.isHidden = true
-        root.addSublayer(dividerLineLayer)
-    }
-
-    private func setupLabels() {
-        for label in [valueLabel, label0, label100, label150] {
-            addSubview(label)
-        }
-    }
-
-    private static func valueLabel() -> NSTextField {
-        let f = NSTextField(labelWithString: "100")
-        f.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        f.textColor = NSColor.white.withAlphaComponent(0.85)
-        f.drawsBackground = false
-        f.isBordered = false
-        f.alignment = .center
-        return f
-    }
-
-    private static func tickLabel(_ text: String) -> NSTextField {
-        let f = NSTextField(labelWithString: text)
-        f.font = .systemFont(ofSize: 9, weight: .regular)
-        f.textColor = NSColor.white.withAlphaComponent(0.60)
-        f.drawsBackground = false
-        f.isBordered = false
-        f.alignment = .right
-        return f
-    }
-
-    // MARK: - Layout
-
     override func layout() {
         super.layout()
 
-        let safeWidth = (bounds.width.isFinite && bounds.width >= 0) ? bounds.width : 0
-
-        // Track background
-        trackBgLayer.frame = NSRect(x: trackX, y: trackY, width: trackW, height: trackH)
-
-        // Tick labels
-        let labelH: CGFloat = 11
-        valueLabel.frame = NSRect(x: 0, y: trackY + trackH + 8, width: safeWidth, height: 14)
-        label0.frame   = NSRect(x: labelX, y: trackY - 2,               width: labelW, height: labelH)
-        label100.frame = NSRect(x: labelX, y: dividerY - 2,             width: labelW, height: labelH)
-        label150.frame = NSRect(x: labelX, y: trackY + trackH - 2,      width: labelW, height: labelH)
-
-        // Divider line
-        dividerLineLayer.frame = NSRect(x: trackX - 2, y: dividerY,
-                                        width: trackW + 4, height: 1)
-
-        updateFillLayers()
+        let iconHeight: CGFloat = 18
+        speakerImageView.frame = NSRect(
+            x: Metrics.iconX,
+            y: (bounds.height - iconHeight) / 2,
+            width: Metrics.iconWidth,
+            height: iconHeight
+        )
+        valueLabel.frame = NSRect(
+            x: bounds.width - Metrics.valueWidth - Metrics.valueTrailingInset,
+            y: (bounds.height - 20) / 2,
+            width: Metrics.valueWidth,
+            height: 20
+        )
+        needsDisplay = true
     }
 
-    // MARK: - Fill update (no animation – called frequently during drag)
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
 
-    private func updateFillLayers() {
-        let vol = CGFloat(max(0, min(150, currentVolume)))
-        let normalH = trackH * min(vol, 100) / 150
-        let extH    = trackH * max(0, vol - 100) / 150
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        normalFillLayer.frame = NSRect(x: trackX, y: trackY,
-                                       width: trackW, height: normalH)
-        extFillLayer.frame    = NSRect(x: trackX, y: trackY + normalH,
-                                       width: trackW, height: extH)
-        dividerLineLayer.isHidden = vol <= 100
-        valueLabel.stringValue = String(Int(vol))
-        valueLabel.textColor = vol > 100
-            ? NSColor.systemOrange.withAlphaComponent(0.92)
-            : NSColor.white.withAlphaComponent(0.85)
-        label100.textColor = vol > 100
-            ? NSColor.systemOrange
-            : NSColor.white.withAlphaComponent(0.60)
-        CATransaction.commit()
+        let meter = meterRect
+        let filledSegments = filledSegmentCount(for: currentVolume)
+        for index in 0..<Metrics.segmentCount {
+            let rect = NSRect(
+                x: meter.minX + CGFloat(index) * (Metrics.segmentWidth + Metrics.segmentGap),
+                y: meter.minY,
+                width: Metrics.segmentWidth,
+                height: Metrics.segmentHeight
+            )
+            let color: NSColor
+            if index >= filledSegments {
+                color = NSColor.white.withAlphaComponent(0.16)
+            } else if index < Metrics.normalSegmentCount {
+                color = PlayerBrandColors.periwinkleLight.withAlphaComponent(0.82)
+            } else {
+                color = PlayerBrandColors.darkOchreLight.withAlphaComponent(0.86)
+            }
+            color.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+        }
     }
 
-    // MARK: - Public API
-
-    /// Show the bar for `volume`, fade in if hidden, then schedule auto-hide.
-    /// Safe to call during drag (bar stays visible until mouseUp).
+    /// Shows the HUD for `volume`, fading in if hidden and rescheduling auto-hide.
+    /// Safe during drag: the HUD remains visible until mouse up.
     func show(volume: Int32) {
-        currentVolume = volume
-        updateFillLayers()
+        currentVolume = clampedVolume(volume)
+        updatePresentation()
 
         guard !isDragging else { return }
-
         if isHidden || alphaValue < 0.05 {
             isHidden = false
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.12
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
                 self.animator().alphaValue = 1.0
             }
         }
         scheduleHide()
     }
 
-    private func scheduleHide() {
-        hideTimer?.invalidate()
-        hideTimer = Timer.scheduledTimer(withTimeInterval: 1.8, repeats: false) { [weak self] _ in
-            guard let self = self, !self.isDragging else { return }
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.35
-                self.animator().alphaValue = 0
-            } completionHandler: {
-                self.isHidden   = true
-                self.alphaValue = 0
-            }
-        }
-    }
-
-    // MARK: - Mouse interaction
-
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override var acceptsFirstResponder: Bool { false }  // don't steal keyboard focus
+    override var acceptsFirstResponder: Bool { false }
 
     override func mouseDown(with event: NSEvent) {
         isDragging = true
         hideTimer?.invalidate()
-        isHidden   = false
+        isHidden = false
         alphaValue = 1.0
         applyMouseVolume(event)
     }
@@ -216,16 +147,76 @@ final class VolumeBarView: NSView {
         scheduleHide()
     }
 
-    private func applyMouseVolume(_ event: NSEvent) {
-        let pt  = convert(event.locationInWindow, from: nil)
-        let vol = volumeForY(pt.y)
-        currentVolume = vol
-        updateFillLayers()
-        onVolumeChanged?(vol)
+    private var meterRect: NSRect {
+        NSRect(
+            x: Metrics.meterX,
+            y: (bounds.height - Metrics.segmentHeight) / 2,
+            width: Metrics.meterWidth,
+            height: Metrics.segmentHeight
+        )
     }
 
-    private func volumeForY(_ y: CGFloat) -> Int32 {
-        let frac = (y - trackY) / trackH
-        return Int32(max(0, min(150, Int(frac * 150 + 0.5))))
+    private static func makeValueLabel() -> NSTextField {
+        let label = NSTextField(labelWithString: "100%")
+        label.font = Metrics.valueFont
+        label.textColor = NSColor.white.withAlphaComponent(0.94)
+        label.drawsBackground = false
+        label.isBordered = false
+        label.alignment = .right
+        return label
+    }
+
+    private func configureSpeakerImageView() {
+        speakerImageView.imageScaling = .scaleProportionallyUpOrDown
+        speakerImageView.contentTintColor = NSColor.white.withAlphaComponent(0.94)
+    }
+
+    private func updatePresentation() {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        let symbolName = currentVolume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill"
+        speakerImageView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration)
+        valueLabel.stringValue = "\(currentVolume)%"
+        setAccessibilityValue("\(currentVolume)%")
+        needsDisplay = true
+    }
+
+    private func filledSegmentCount(for volume: Int32) -> Int {
+        VolumePolicy.filledSegmentCount(
+            for: volume,
+            normalSegmentCount: Metrics.normalSegmentCount,
+            extendedSegmentCount: Metrics.extendedSegmentCount
+        )
+    }
+
+    private func clampedVolume(_ volume: Int32) -> Int32 {
+        VolumePolicy.clamped(volume)
+    }
+
+    private func applyMouseVolume(_ event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let fraction = (point.x - meterRect.minX) / meterRect.width
+        let volume = VolumePolicy.volume(
+            forMeterFraction: fraction,
+            normalSegmentCount: Metrics.normalSegmentCount,
+            extendedSegmentCount: Metrics.extendedSegmentCount
+        )
+        currentVolume = volume
+        updatePresentation()
+        onVolumeChanged?(volume)
+    }
+
+    private func scheduleHide() {
+        hideTimer?.invalidate()
+        hideTimer = Timer.scheduledTimer(withTimeInterval: 1.8, repeats: false) { [weak self] _ in
+            guard let self, !self.isDragging else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.35
+                self.animator().alphaValue = 0
+            } completionHandler: {
+                self.isHidden = true
+                self.alphaValue = 0
+            }
+        }
     }
 }
