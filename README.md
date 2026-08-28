@@ -15,6 +15,7 @@
 ## Overview
 
 dwb player is a native Swift/AppKit media player for macOS 13 and newer. It is designed for fast local queueing, independent playback windows, Finder-style file ordering, and direct file-management controls.
+*override mode*
 
 > **Release status:** The latest public source release is **v4.2.2**. The current development build is **4.2.4**.
 
