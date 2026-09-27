@@ -162,3 +162,101 @@ enum QueueDisplayProjection {
         )
     }
 }
+
+/// Pure policy helper for the Queue Page "Play Next" pending chain.
+///
+/// Implements FIFO pending chain semantics anchored after the currently playing media item.
+/// Repeated Play Next selections append after existing pending items.
+/// When playback advances into a pending item, that item is consumed from the chain while
+/// retaining the remaining pending items immediately after it.
+enum PlayNextChainPolicy {
+
+    /// Applies a user Play Next request to the queue.
+    ///
+    /// - Parameters:
+    ///   - targetDisplayIndex: The canonical index in `displayOrder` of the item to move.
+    ///   - displayOrder: The mutable array of set indices representing current playback order.
+    ///   - currentDisplayIndex: The mutable index in `displayOrder` of the playing item.
+    ///   - pendingSetIndices: The ordered FIFO chain of pending set indices.
+    /// - Returns: `true` if the queue or pending chain was modified; `false` if safe no-op.
+    @discardableResult
+    static func applyPlayNext(
+        targetDisplayIndex: Int,
+        displayOrder: inout [Int],
+        currentDisplayIndex: inout Int,
+        pendingSetIndices: inout [Int]
+    ) -> Bool {
+        // Guard: valid indices and target cannot be the currently playing item.
+        guard currentDisplayIndex >= 0, currentDisplayIndex < displayOrder.count,
+              targetDisplayIndex >= 0, targetDisplayIndex < displayOrder.count,
+              targetDisplayIndex != currentDisplayIndex else {
+            return false
+        }
+
+        let curSetIdx = displayOrder[currentDisplayIndex]
+        let movedSetIdx = displayOrder[targetDisplayIndex]
+        guard movedSetIdx != curSetIdx else { return false }
+
+        // Selecting an item already in the pending chain is a safe no-op (no duplicate, no reorder).
+        guard !pendingSetIndices.contains(movedSetIdx) else { return false }
+
+        let expectedNextIndex = currentDisplayIndex + 1 + pendingSetIndices.count
+        if targetDisplayIndex == expectedNextIndex {
+            // Already in position right after the current pending chain.
+            pendingSetIndices.append(movedSetIdx)
+            return true
+        }
+
+        // Remove the target item from displayOrder.
+        displayOrder.remove(at: targetDisplayIndex)
+
+        // Adjust currentDisplayIndex if target was before it.
+        var adjustedCurrent = currentDisplayIndex
+        if targetDisplayIndex < currentDisplayIndex {
+            adjustedCurrent -= 1
+        }
+
+        // Insert immediately after the existing pending chain.
+        let insertAt = min(adjustedCurrent + 1 + pendingSetIndices.count, displayOrder.count)
+        displayOrder.insert(movedSetIdx, at: insertAt)
+
+        // Restore currentDisplayIndex to track the same playing media item.
+        if let newCur = displayOrder.firstIndex(of: curSetIdx) {
+            currentDisplayIndex = newCur
+        }
+
+        pendingSetIndices.append(movedSetIdx)
+        return true
+    }
+
+    /// Updates the pending chain when playback of an item begins.
+    ///
+    /// Consumes the currently playing item from the chain and prunes any entries
+    /// that are no longer present in `displayOrder` or are positioned at or before `currentDisplayIndex`.
+    static func onPlaybackStarted(
+        currentSetIndex: Int,
+        displayOrder: [Int],
+        currentDisplayIndex: Int,
+        pendingSetIndices: inout [Int]
+    ) {
+        guard !pendingSetIndices.isEmpty else { return }
+        // Consume the currently playing item if it was pending.
+        pendingSetIndices.removeAll { $0 == currentSetIndex }
+        guard currentDisplayIndex >= 0, currentDisplayIndex < displayOrder.count else { return }
+        // Prune any items no longer in displayOrder or positioned at/before current item.
+        pendingSetIndices.removeAll { setIdx in
+            guard let pos = displayOrder.firstIndex(of: setIdx) else { return true }
+            return pos <= currentDisplayIndex
+        }
+    }
+
+    /// Remaps pending set indices when an item is removed from `playbackSet` and `displayOrder`.
+    static func onQueueItemRemoved(
+        removedSetIndex: Int,
+        pendingSetIndices: inout [Int]
+    ) {
+        guard !pendingSetIndices.isEmpty else { return }
+        pendingSetIndices.removeAll { $0 == removedSetIndex }
+        pendingSetIndices = pendingSetIndices.map { $0 > removedSetIndex ? $0 - 1 : $0 }
+    }
+}

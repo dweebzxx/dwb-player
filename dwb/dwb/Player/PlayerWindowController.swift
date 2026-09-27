@@ -208,6 +208,9 @@ class PlayerWindowController: NSWindowController {
     /// Current position in `displayOrder`. -1 when no set is loaded.
     private var currentDisplayIndex: Int = -1
 
+    /// Ordered pending Play Next chain (FIFO) stored as set indices into `playbackSet`.
+    private var pendingPlayNextSetIndices: [Int] = []
+
     /// Index into `playbackSet` for the item currently playing.
     var currentSetIndex: Int {
         guard currentDisplayIndex >= 0, currentDisplayIndex < displayOrder.count else { return -1 }
@@ -321,6 +324,18 @@ class PlayerWindowController: NSWindowController {
     private var lastStoppedPosition: Float = 0
     private var lastStoppedMediaURL: URL? = nil
 
+    /// Steady-state (post-start-handshake) stall detection: unlike lastProgressMT, which
+    /// only tracks "position/time was non-zero" and so never ages out for media frozen at a
+    /// fixed non-zero position, these track the last position/time *value* seen and when it
+    /// last actually changed. A file that starts fine but goes silent mid-stream (e.g. a
+    /// container truncated mid-playback) can leave VLC reporting .playing/.buffering forever
+    /// without ever emitting .error or .ended, so nothing else in the completion watchdog can
+    /// ever fire for it.
+    private var lastSteadyPlaybackPosition: Float = -1
+    private var lastSteadyPlaybackTimeMs: Int = -1
+    private var lastSteadyPlaybackAdvanceMT: TimeInterval = 0
+    private let midPlaybackStallToleranceSeconds: TimeInterval = 4.0
+
     /// Position captured on the VLC callback thread at the moment the .ended event fires.
     /// More reliable than capturedPosition at .stopped time because VLC hasn't reset it yet.
     private var positionAtEndedEvent: Float = 0
@@ -351,8 +366,8 @@ class PlayerWindowController: NSWindowController {
         let expectedURL: URL
         let expectedSessionID: Int
         let transitionStrategy: PlaybackTransitionStrategy
-        let baselinePosition: Float
-        let baselineTimeMs: Int
+        var baselinePosition: Float
+        var baselineTimeMs: Int
         var playRetryCount: Int
         var progressRetryCount: Int
         var sawPlaying: Bool
@@ -365,6 +380,10 @@ class PlayerWindowController: NSWindowController {
     private var replacementStartWorkItem: DispatchWorkItem? = nil
     private var replacementStartSequence = 0
 
+    /// Per-window, one-shot failure state. A VLC failure can emit both `.error`
+    /// and a failed-start handshake result; this keeps one failed attempt to one skip.
+    private var activePlaybackFailureAttempt: PlaybackFailureAttempt? = nil
+
     // MARK: - Queue page (full in-window panel)
 
     private(set) var isQueuePageOpen = false
@@ -375,6 +394,9 @@ class PlayerWindowController: NSWindowController {
     private var durationSecondsCache: [URL: Double] = [:]
     private var currentDurationIsProvisional = false
     private var queueSortMode: QueueSortMode = .manual
+    /// A rename updates metadata without becoming an implicit user sort action.
+    /// Kept until the user explicitly picks a Queue Page sort mode again.
+    private var queueSortOrderFrozenAfterRename = false
 
     var isShowingProvisionalDuration: Bool { currentDurationIsProvisional }
 
@@ -868,19 +890,19 @@ class PlayerWindowController: NSWindowController {
     func performCustomPrefixRenameCurrentItem(source: String = "videoPage") {
         guard canRenameCurrentMedia else { return }
         guard currentSetIndex >= 0, currentSetIndex < playbackSet.count else { return }
-        let prefix = SettingsWindowController.customPrefixValue()
-        guard !prefix.isEmpty else {
+        let primary   = SettingsWindowController.customPrefixValue()
+        let secondary = SettingsWindowController.customPrefixSecondaryValue()
+        guard !primary.isEmpty else {
             DebugConsoleController.log("rename", "customPrefix: noop (empty prefix) source=\(source)")
             return
         }
         let url = playbackSet[currentSetIndex]
-        let stem = url.deletingPathExtension().lastPathComponent
-        if stem.hasPrefix(prefix) {
-            DebugConsoleController.log("rename", "customPrefix: noop (already prefixed) file=\(url.lastPathComponent) source=\(source)")
+        guard let newName = MediaFileSupport.calculatePrefixTransition(
+            originalURL: url, primary: primary, secondary: secondary, invokedPrimary: true
+        ) else {
+            DebugConsoleController.log("rename", "customPrefix: noop (no change) file=\(url.lastPathComponent) source=\(source)")
             return
         }
-        let ext = url.pathExtension
-        let newName = ext.isEmpty ? "\(prefix)\(stem)" : "\(prefix)\(stem).\(ext)"
         DebugConsoleController.log("rename", "customPrefix: \(url.lastPathComponent) → \(newName) source=\(source)")
         renameFile(at: currentSetIndex, to: newName)
     }
@@ -888,19 +910,19 @@ class PlayerWindowController: NSWindowController {
     func performSecondaryCustomPrefixRenameCurrentItem(source: String = "videoPage") {
         guard canRenameCurrentMedia else { return }
         guard currentSetIndex >= 0, currentSetIndex < playbackSet.count else { return }
-        let prefix = SettingsWindowController.customPrefixSecondaryValue()
-        guard !prefix.isEmpty else {
+        let primary   = SettingsWindowController.customPrefixValue()
+        let secondary = SettingsWindowController.customPrefixSecondaryValue()
+        guard !secondary.isEmpty else {
             DebugConsoleController.log("rename", "customPrefixSecondary: noop (empty prefix) source=\(source)")
             return
         }
         let url = playbackSet[currentSetIndex]
-        let stem = url.deletingPathExtension().lastPathComponent
-        if stem.hasPrefix(prefix) {
-            DebugConsoleController.log("rename", "customPrefixSecondary: noop (already prefixed) file=\(url.lastPathComponent) source=\(source)")
+        guard let newName = MediaFileSupport.calculatePrefixTransition(
+            originalURL: url, primary: primary, secondary: secondary, invokedPrimary: false
+        ) else {
+            DebugConsoleController.log("rename", "customPrefixSecondary: noop (no change) file=\(url.lastPathComponent) source=\(source)")
             return
         }
-        let ext = url.pathExtension
-        let newName = ext.isEmpty ? "\(prefix)\(stem)" : "\(prefix)\(stem).\(ext)"
         DebugConsoleController.log("rename", "customPrefixSecondary: \(url.lastPathComponent) → \(newName) source=\(source)")
         renameFile(at: currentSetIndex, to: newName)
     }
@@ -1001,10 +1023,10 @@ class PlayerWindowController: NSWindowController {
 
     // MARK: - Video title overlay
 
-    /// Show the video title at the top-center of the player area for 5 seconds.
+    /// Show a transient title/status message at the top-center of the player area.
     /// Cancels and restarts any existing overlay timer so rapid track changes
     /// don't stack multiple hide timers.
-    func showVideoTitleOverlay(title: String) {
+    func showVideoTitleOverlay(title: String, duration: TimeInterval = 5.0) {
         titleOverlayHideWork?.cancel()
         titleOverlayHideWork = nil
         titleOverlayShowGeneration += 1
@@ -1039,7 +1061,7 @@ class PlayerWindowController: NSWindowController {
             }
         }
         titleOverlayHideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
     }
 
     private func positionVideoTitleOverlay() {
@@ -1095,6 +1117,7 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("queue", "openReplace: count=\(set.count)")
         playbackSet     = set
         displayOrder    = Array(0..<set.count)
+        pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = 0
         if isShuffleOn {
             if randomizeShuffleStart {
@@ -1130,6 +1153,7 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("queue", "add: count=\(files.count) wasEmpty=\(wasEmpty) files=\(files.map(\.lastPathComponent).prefix(3).joined(separator: ","))")
 
         currentDisplayIndex = 0
+        pendingPlayNextSetIndices.removeAll()
         if randomizeShuffleStart && isShuffleOn {
             applyShuffleWithRandomStart()
         } else if !isShuffleOn {
@@ -1267,6 +1291,7 @@ class PlayerWindowController: NSWindowController {
             indices.insert(curPBIdx, at: 0)
         }
         displayOrder = indices
+        pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = 0
     }
 
@@ -1274,6 +1299,7 @@ class PlayerWindowController: NSWindowController {
     /// item, so a successful folder drop can begin at a random accepted item.
     private func applyShuffleWithRandomStart() {
         displayOrder = Array(0..<playbackSet.count).shuffled()
+        pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = 0
     }
 
@@ -1281,6 +1307,7 @@ class PlayerWindowController: NSWindowController {
     private func restoreNaturalOrder() {
         let curPBIdx = currentSetIndex
         displayOrder = Array(0..<playbackSet.count)
+        pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = curPBIdx >= 0 ? curPBIdx : 0
         applyQueueSortIfNeeded(reason: "restore-natural-order", refreshUI: false)
     }
@@ -1350,6 +1377,7 @@ class PlayerWindowController: NSWindowController {
             indices.swapAt(0, swapIndex)
         }
         displayOrder = indices
+        pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = 0
         NSLog("[dwb-playback] endlessShuffleCycle: priorSetIdx=%d newOrder=[%@]",
               priorSetIndex,
@@ -1363,6 +1391,13 @@ class PlayerWindowController: NSWindowController {
             if preserveCurrentItem {
                 remapCurrentDisplayIndex(toSetIndex: currentSetIndex)
             }
+            if refreshUI { refreshQueueDisplays() }
+            return
+        }
+
+        guard !queueSortOrderFrozenAfterRename else {
+            NSLog("[dwb-playback] queueSortApply: skipped reason=%@ mode=%@ renameOrderFrozen=1",
+                  reason, queueSortMode.title)
             if refreshUI { refreshQueueDisplays() }
             return
         }
@@ -1677,6 +1712,7 @@ class PlayerWindowController: NSWindowController {
         // isUserStop were missed, advanceToNextItem would correctly find nothing.
         playbackSet.removeAll()
         displayOrder.removeAll()
+        pendingPlayNextSetIndices.removeAll()
         sourceFolderURLs.removeAll()
         currentDisplayIndex          = -1
         currentMediaURL              = nil
@@ -1708,6 +1744,10 @@ class PlayerWindowController: NSWindowController {
         durationCache.removeValue(forKey: removedURL)
         durationSecondsCache.removeValue(forKey: removedURL)
         displayOrder = displayOrder.map { $0 > removedSetIndex ? $0 - 1 : $0 }
+        PlayNextChainPolicy.onQueueItemRemoved(
+            removedSetIndex: removedSetIndex,
+            pendingSetIndices: &pendingPlayNextSetIndices
+        )
 
         if playbackSet.isEmpty || displayOrder.isEmpty {
             if removingCurrent, player.media != nil {
@@ -1788,15 +1828,23 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("rename", "success: \(url.lastPathComponent) → \(validatedName)")
         // Update master list and caches
         playbackSet[playbackSetIndex] = newURL
-        durationCache.removeValue(forKey: url)   // clear old key; new one fetched on demand
-        durationSecondsCache.removeValue(forKey: url)
+        if let cachedDuration = durationCache.removeValue(forKey: url) {
+            durationCache[newURL] = cachedDuration
+        }
+        if let cachedSeconds = durationSecondsCache.removeValue(forKey: url) {
+            durationSecondsCache[newURL] = cachedSeconds
+        }
 
         if playbackSetIndex == currentSetIndex {
             currentMediaURL = newURL
             updateWindowTitle(newURL.lastPathComponent)
         }
 
-        applyQueueSortIfNeeded(reason: "rename")
+        // A rename changes queue metadata, but must not implicitly reapply an active
+        // sort: `displayOrder` is also the live playback order and may contain a
+        // P120.1 Play Next chain. An explicit later sort remains authoritative.
+        queueSortOrderFrozenAfterRename = queueSortMode != .manual
+        refreshQueueDisplays()
         // Note: VLC continues playing from the already-open file descriptor;
         // the new path takes effect the next time playCurrentItem() is called.
     }
@@ -2582,6 +2630,9 @@ class PlayerWindowController: NSWindowController {
         lastUserSeekMT = 0
         lastPlayingMT = 0
         lastProgressMT = 0
+        lastSteadyPlaybackPosition = -1
+        lastSteadyPlaybackTimeMs = -1
+        lastSteadyPlaybackAdvanceMT = 0
         lastStoppedMT = 0
         lastStoppedPosition = 0
         lastStoppedMediaURL = nil
@@ -2605,6 +2656,7 @@ class PlayerWindowController: NSWindowController {
     private func resetPlaybackCompletionSignals(reason: String,
                                                preserveCompletionSequence: Bool = false) {
         cancelScheduledPlaybackAction(reason: reason)
+        cancelPlaybackFailureAutoSkip(reason: reason)
         clearPlaybackCompletionEvidence()
         clearStoppedSuppression()
         cancelReplacementStart(reason: reason)
@@ -2702,6 +2754,12 @@ class PlayerWindowController: NSWindowController {
         }
 
         let url = playbackSet[idx]
+        PlayNextChainPolicy.onPlaybackStarted(
+            currentSetIndex: idx,
+            displayOrder: displayOrder,
+            currentDisplayIndex: currentDisplayIndex,
+            pendingSetIndices: &pendingPlayNextSetIndices
+        )
         let hadExistingMedia = player.media != nil
         seekTargetMs = nil
         seekTargetResetTimer?.invalidate()
@@ -2815,10 +2873,9 @@ class PlayerWindowController: NSWindowController {
                 NSLog("[dwb-image] load-failed: %@", url.lastPathComponent)
                 DebugConsoleController.log(level: .error, category: "error", message: "image load failed: \(url.lastPathComponent)")
                 clearImageSlideshowState()
-                DispatchQueue.main.async { [weak self] in
-                    guard let self = self, self.currentMediaURL?.path == url.path else { return }
-                    _ = self.advanceToNextItem(reason: "image-load-failed")
-                }
+                schedulePlaybackFailureAutoSkip(failedURL: url,
+                                                failedSessionID: currentPlaybackSessionID,
+                                                source: "image-load")
                 return
             }
             gifFrameTimer?.invalidate()
@@ -2892,6 +2949,86 @@ class PlayerWindowController: NSWindowController {
         }
         scheduledPlaybackAction = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func cancelPlaybackFailureAutoSkip(reason: String) {
+        guard activePlaybackFailureAttempt != nil else { return }
+        NSLog("[dwb-playback] failureAutoSkipCancel: reason=%@", reason)
+        activePlaybackFailureAttempt = nil
+    }
+
+    /// Advances a confirmed failed item through the normal queue/start path.
+    /// This is intentionally separate from completion policy: an error must never
+    /// trigger Repeat One or immediately retry a one-item Endless Shuffle queue.
+    private func schedulePlaybackFailureAutoSkip(failedURL: URL,
+                                                 failedSessionID: Int,
+                                                 source: String) {
+        let attempt = PlaybackFailureAttempt(mediaURL: failedURL, sessionID: failedSessionID)
+        let action = PlaybackFailureAdvancePolicy(
+            currentDisplayIndex: currentDisplayIndex,
+            displayOrderCount: displayOrder.count,
+            isEndlessShuffleOn: isEndlessShuffleOn
+        ).action
+        let disposition = PlaybackFailureAdvancePolicy.disposition(
+            failedAttempt: attempt,
+            currentURL: currentMediaURL,
+            currentSessionID: currentPlaybackSessionID,
+            isUserStop: isUserStop,
+            naturalEOFDetected: naturalEOFDetected,
+            activeFailureAttempt: activePlaybackFailureAttempt,
+            action: action
+        )
+        guard currentSetIndex >= 0,
+              currentSetIndex < playbackSet.count,
+              playbackSet[currentSetIndex].standardizedFileURL.path == failedURL.standardizedFileURL.path else {
+            NSLog("[dwb-playback] failureAutoSkip: ignored source=%@ media=%@ session=%d reason=queue-identity-mismatch",
+                  source, failedURL.lastPathComponent, failedSessionID)
+            return
+        }
+
+        switch disposition {
+        case .ignoreStaleOrUserStop:
+            NSLog("[dwb-playback] failureAutoSkip: ignored source=%@ media=%@ session=%d reason=stale-or-user-stop",
+                  source, failedURL.lastPathComponent, failedSessionID)
+            return
+        case .ignoreDuplicate:
+            NSLog("[dwb-playback] failureAutoSkip: ignored source=%@ media=%@ session=%d reason=duplicate-attempt",
+                  source, failedURL.lastPathComponent, failedSessionID)
+            return
+        case .handle:
+            break
+        }
+
+        resetPlaybackCompletionSignals(reason: "playback-failure-\(source)")
+        activePlaybackFailureAttempt = attempt
+        let filename = failedURL.lastPathComponent
+        DebugConsoleController.log(level: .error,
+                                   category: "playback",
+                                   message: "failure: \(filename) source=\(source) action=\(action)")
+        NSLog("[dwb-playback] failureAutoSkip: source=%@ media=%@ session=%d action=%@ schedule=immediate",
+              source, filename, failedSessionID, String(describing: action))
+
+        guard action == .skipToNextDistinctItem else {
+            NSLog("[dwb-playback] failureAutoSkip: no-distinct-successor media=%@", filename)
+            showPlaybackFailureOverlay(filename: filename)
+            return
+        }
+
+        let advanced = advanceToNextItem(reason: "playback-failure-\(source)",
+                                         expectPlaybackHandshake: true,
+                                         transitionStrategy: .reuseCurrentPlayer)
+        // Shown after advanceToNextItem (which starts the successor and sets its own
+        // title overlay) so the failure message is the one left visible, rather than
+        // being clobbered immediately by the successor's now-playing overlay.
+        showPlaybackFailureOverlay(filename: filename)
+        NSLog("[dwb-playback] failureAutoSkip: execute media=%@ advanced=%d",
+              failedURL.lastPathComponent, advanced ? 1 : 0)
+    }
+
+    /// Non-blocking, non-modal failure toast reusing the existing title-overlay
+    /// widget. Purely cosmetic: never gates, delays, or is required by advancement.
+    private func showPlaybackFailureOverlay(filename: String) {
+        showVideoTitleOverlay(title: "Could not play \u{201c}\(filename)\u{201d}", duration: 1.0)
     }
 
     private func cancelReplacementStart(reason: String, suppressLog: Bool = false) {
@@ -3099,15 +3236,38 @@ class PlayerWindowController: NSWindowController {
         }
 
         guard mediaAssigned else {
-            NSLog("[dwb-playback] handshakeCheck: id=%d reason=%@ media changed before start — abandoning",
-                  handshake.id, handshake.reason)
-            cancelPlaybackStartHandshake(reason: "media-changed", suppressLog: true)
-            clearCompletionSequence(reason: "handshake-media-changed", suppressLog: true)
+            let stillCurrentAttempt = currentPlaybackSessionID == handshake.expectedSessionID
+                && self.currentMediaURL?.standardizedFileURL.path == handshake.expectedURL.standardizedFileURL.path
+            if stillCurrentAttempt {
+                NSLog("[dwb-playback] handshakeCheck: id=%d reason=%@ final=failure target=%@ failure=media-cleared-before-start",
+                      handshake.id,
+                      handshake.reason,
+                      handshake.expectedURL.lastPathComponent)
+                cancelPlaybackStartHandshake(reason: "media-cleared-before-start", suppressLog: true)
+                schedulePlaybackFailureAutoSkip(failedURL: handshake.expectedURL,
+                                                failedSessionID: handshake.expectedSessionID,
+                                                source: "handshake-media-cleared")
+            } else {
+                NSLog("[dwb-playback] handshakeCheck: id=%d reason=%@ media changed before start — abandoning",
+                      handshake.id, handshake.reason)
+                cancelPlaybackStartHandshake(reason: "media-changed", suppressLog: true)
+                clearCompletionSequence(reason: "handshake-media-changed", suppressLog: true)
+            }
             return
         }
 
         if started && !handshake.sawPlaying {
             handshake.sawPlaying = true
+            // Reset the progress baseline to the position/time observed right now, at the
+            // moment this specific media is first confirmed playing. The baseline captured
+            // at arm-time (armPlaybackStartHandshake) can still reflect the *previous* item's
+            // leftover position/time on a reuseCurrentPlayer transition, since VLCKit does not
+            // guarantee player.position/time are reset synchronously the instant new media is
+            // assigned. A stale non-zero baseline (e.g. near 1.0 after the prior item played to
+            // completion) can make playbackProgressConfirmed() nearly impossible to satisfy for
+            // a perfectly valid new item, wrongly classifying it as failed (handshake-no-progress).
+            handshake.baselinePosition = position
+            handshake.baselineTimeMs = timeMs
             playbackStartHandshake = handshake
             NSLog("[dwb-playback] handshakeFirstPlaying: id=%d reason=%@ media=%@ transition=%@",
                   handshake.id,
@@ -3164,7 +3324,9 @@ class PlayerWindowController: NSWindowController {
                   handshake.reason,
                   handshake.expectedURL.lastPathComponent)
             cancelPlaybackStartHandshake(reason: "progress-retry-exhausted", suppressLog: true)
-            clearCompletionSequence(reason: "handshake-no-progress")
+            schedulePlaybackFailureAutoSkip(failedURL: handshake.expectedURL,
+                                            failedSessionID: handshake.expectedSessionID,
+                                            source: "handshake-no-progress")
             return
         }
 
@@ -3200,7 +3362,9 @@ class PlayerWindowController: NSWindowController {
               handshake.reason,
               handshake.expectedURL.lastPathComponent)
         cancelPlaybackStartHandshake(reason: "retry-exhausted", suppressLog: true)
-        clearCompletionSequence(reason: "handshake-failure")
+        schedulePlaybackFailureAutoSkip(failedURL: handshake.expectedURL,
+                                        failedSessionID: handshake.expectedSessionID,
+                                        source: "handshake-no-playing")
     }
 
     private func rebuildPlayerAfterFailedStart(for handshake: PlaybackStartHandshake) {
@@ -3489,6 +3653,26 @@ class PlayerWindowController: NSWindowController {
             return
         }
 
+        // A truncated file plays until its data runs out, then VLC pauses on its own well
+        // before EOF. The only user pause path records an explicit .pause intent, so a
+        // .paused event without one, short of EOF, is a playback failure: skip it.
+        if source == "paused",
+           currentState == .paused,
+           !eofDetected,
+           !recentSeek,
+           !isUserStop,
+           !currentItemIsImage,
+           playbackStartHandshake == nil,
+           explicitPlayPauseIntent?.target != .pause,
+           let failedURL = currentMediaURL {
+            NSLog("[dwb-playback] completionDecision: source=paused action=failure reason=paused-before-eof-without-user-intent pos=%.3f media=%@",
+                  sampledPosition, targetURLName)
+            schedulePlaybackFailureAutoSkip(failedURL: failedURL,
+                                            failedSessionID: currentPlaybackSessionID,
+                                            source: "paused-before-eof")
+            return
+        }
+
         guard (rendererInactive && playbackRecentlyActive) || pausedNearEOF else { return }
         guard !recentSeek, eofDetected else { return }
         guard currentMediaURL != nil, currentDisplayIndex >= 0, !displayOrder.isEmpty else { return }
@@ -3497,6 +3681,53 @@ class PlayerWindowController: NSWindowController {
                                    source: completionSource,
                                    sourceURL: targetURL,
                                    eofDecision: eofDecision)
+    }
+
+    /// Detects a video that started fine but has gone silent mid-stream: VLC keeps
+    /// reporting .playing/.buffering (isPlaying stays true) but position/time have not
+    /// actually moved for midPlaybackStallToleranceSeconds. Complements the start-handshake
+    /// (which only covers the initial start-up window) and evaluateCompletionWatchdog (which
+    /// only fires on an explicit .paused/.ended/.stopped transition VLC never delivers here).
+    private func evaluateMidPlaybackStallWatchdog() {
+        guard !currentItemIsImage,
+              playbackStartHandshake == nil,
+              !isUserStop,
+              player.isPlaying,
+              let stalledURL = currentMediaURL else {
+            return
+        }
+
+        let nowMT = CACurrentMediaTime()
+        let recentSeekAge: TimeInterval = lastUserSeekMT > 0 ? nowMT - lastUserSeekMT : -1
+        guard recentSeekAge < 0 || recentSeekAge >= userSeekEOFGuardWindow else { return }
+
+        let timeMs = Int(player.time.intValue)
+        let position = player.position
+        let advanced = lastSteadyPlaybackTimeMs < 0
+            || timeMs != lastSteadyPlaybackTimeMs
+            || (position.isFinite && lastSteadyPlaybackPosition.isFinite && position != lastSteadyPlaybackPosition)
+
+        if advanced {
+            lastSteadyPlaybackPosition = position
+            lastSteadyPlaybackTimeMs = timeMs
+            lastSteadyPlaybackAdvanceMT = nowMT
+            return
+        }
+
+        guard lastSteadyPlaybackAdvanceMT > 0 else {
+            lastSteadyPlaybackAdvanceMT = nowMT
+            return
+        }
+
+        let stalledForSeconds = nowMT - lastSteadyPlaybackAdvanceMT
+        guard stalledForSeconds >= midPlaybackStallToleranceSeconds else { return }
+
+        let stalledSessionID = currentPlaybackSessionID
+        NSLog("[dwb-playback] midPlaybackStall: media=%@ session=%d stalledForSec=%.1f timeMs=%d pos=%.3f",
+              stalledURL.lastPathComponent, stalledSessionID, stalledForSeconds, timeMs, position)
+        schedulePlaybackFailureAutoSkip(failedURL: stalledURL,
+                                        failedSessionID: stalledSessionID,
+                                        source: "mid-playback-stall")
     }
 
     // MARK: - Playback speed
@@ -3710,6 +3941,7 @@ class PlayerWindowController: NSWindowController {
                 self.updatePlaybackProgressSnapshot()
             }
             self.evaluateCompletionWatchdog(source: "watchdog")
+            self.evaluateMidPlaybackStallWatchdog()
             // M6 + M4: cosmetic transport refresh, gated for efficiency.
             // Skipped when the window is not effectively visible (minimized or occluded)
             // to avoid needless AppKit work. needsTransportUpdate is preserved so a
@@ -4208,6 +4440,11 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
                 if !handshake.sawPlaying {
                     var updated = handshake
                     updated.sawPlaying = true
+                    // See the matching reset in verifyPlaybackStartHandshake: rebase the
+                    // progress baseline here too, since this notification can be the first
+                    // place we learn the new item is genuinely playing.
+                    updated.baselinePosition = capturedPosition
+                    updated.baselineTimeMs = Int(self.player.time.intValue)
                     self.playbackStartHandshake = updated
                     NSLog("[dwb-playback] handshakeFirstPlaying: id=%d reason=%@ media=%@ transition=%@",
                           updated.id,
@@ -4243,6 +4480,19 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
                     NSLog("[dwb-playback] .ended: capturedURL=%@ currentURL=%@ position=%.3f accepted=0 reason=stale-url-mismatch",
                           capturedURLName,
                           currentURLName,
+                          posAtEnded)
+                    return
+                }
+                // VLC reports an unplayable file (corrupt/truncated/missing moov) as .ended at
+                // position 0 while the start handshake is still unconfirmed. That is not a
+                // natural EOF: marking it as one makes the failure path reject the item as
+                // "stale-or-user-stop", so the queue never advances. Leave it to the handshake,
+                // which reports the failure once its retries are exhausted.
+                if let handshake = self.playbackStartHandshake,
+                   handshake.expectedSessionID == self.currentPlaybackSessionID,
+                   handshake.expectedURL.path == (capturedMediaURL ?? self.currentMediaURL)?.path {
+                    NSLog("[dwb-playback] .ended: capturedURL=%@ position=%.3f accepted=0 reason=start-handshake-unconfirmed",
+                          capturedURLName,
                           posAtEnded)
                     return
                 }
@@ -4341,18 +4591,36 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
             }
 
         case .error:
-            let filename = player.media?.url?.lastPathComponent ?? "unknown file"
-            NSLog("[dwb-playback] state=error   media=%@", filename)
+            let failedURL = capturedMediaURL
+            let filename = failedURL?.lastPathComponent ?? "unknown file"
+            let failedSessionID = currentPlaybackSessionID
+            NSLog("[dwb-playback] state=error   media=%@ session=%d", filename, failedSessionID)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.releasePlaybackSleepAssertion()
-                self.resetPlaybackCompletionSignals(reason: "state-error")
-                let alert = NSAlert()
-                alert.messageText     = "Playback Error"
-                alert.informativeText = "Could not play \"\(filename)\". The file may be unsupported or corrupt."
-                alert.alertStyle      = .warning
-                alert.addButton(withTitle: "OK")
-                if let window = self.window { alert.beginSheetModal(for: window) }
+                if let failedURL {
+                    self.schedulePlaybackFailureAutoSkip(failedURL: failedURL,
+                                                          failedSessionID: failedSessionID,
+                                                          source: "vlc-error")
+                } else if let trackedURL = self.currentMediaURL,
+                          failedSessionID == self.currentPlaybackSessionID {
+                    // player.media can already be nil by the time .error is delivered — this
+                    // happens even after a start handshake already cleared itself as a success
+                    // (e.g. a corrupt file reports brief initial progress before VLC gives up).
+                    // Identify the failed attempt from tracked session/media state rather than
+                    // requiring a still-active handshake, or the failure is silently dropped and
+                    // playback stalls on the broken item indefinitely.
+                    NSLog("[dwb-playback] state=error media=— session=%d route=current-tracked-media target=%@ activeHandshake=%d",
+                          failedSessionID,
+                          trackedURL.lastPathComponent,
+                          self.playbackStartHandshake != nil ? 1 : 0)
+                    self.schedulePlaybackFailureAutoSkip(failedURL: trackedURL,
+                                                          failedSessionID: failedSessionID,
+                                                          source: "vlc-error-no-media")
+                } else {
+                    NSLog("[dwb-playback] state=error media=— session=%d ignored=no-current-attempt-identity",
+                          failedSessionID)
+                }
             }
 
         default:
@@ -4378,31 +4646,34 @@ extension PlayerWindowController: QueuePageViewDelegate {
         showRenameSheet(forDisplayIndex: index)
     }
 
-    /// One-click custom prefix rename. Preflights all targets before renaming any (multi-select safe).
+    /// One-click custom prefix rename. Applies toggle/swap policy to all targets (multi-select safe).
     func queuePage(_ view: QueuePageView, didRequestCustomPrefixRenameAt indices: [Int]) {
-        let prefix = SettingsWindowController.customPrefixValue()
-        guard !prefix.isEmpty else {
+        let primary   = SettingsWindowController.customPrefixValue()
+        let secondary = SettingsWindowController.customPrefixSecondaryValue()
+        guard !primary.isEmpty else {
             DebugConsoleController.log("rename", "customPrefix: noop (empty prefix) source=queuePage")
             return
         }
-        performQueuePagePrefixRename(indices: indices, prefix: prefix, tag: "customPrefix")
+        performQueuePagePrefixRename(indices: indices, primary: primary, secondary: secondary,
+                                     invokedPrimary: true, tag: "customPrefix")
     }
 
     func queuePage(_ view: QueuePageView, didRequestSecondaryCustomPrefixRenameAt indices: [Int]) {
-        let prefix = SettingsWindowController.customPrefixSecondaryValue()
-        guard !prefix.isEmpty else {
+        let primary   = SettingsWindowController.customPrefixValue()
+        let secondary = SettingsWindowController.customPrefixSecondaryValue()
+        guard !secondary.isEmpty else {
             DebugConsoleController.log("rename", "customPrefixSecondary: noop (empty prefix) source=queuePage")
             return
         }
-        performQueuePagePrefixRename(indices: indices, prefix: prefix, tag: "customPrefixSecondary")
+        performQueuePagePrefixRename(indices: indices, primary: primary, secondary: secondary,
+                                     invokedPrimary: false, tag: "customPrefixSecondary")
     }
 
     /// Shared implementation for queue-page prefix rename (primary and secondary).
     ///
-    /// Runs a full preflight via `MediaFileSupport.planPrefixRenames` before any
-    /// filesystem mutation. Single-file renames proceed immediately; multi-file
-    /// renames require explicit confirmation.
-    private func performQueuePagePrefixRename(indices: [Int], prefix: String, tag: String) {
+    /// Applies the toggle/swap prefix-transition policy to each target independently.
+    /// Single-file renames proceed immediately; multi-file renames require confirmation.
+    private func performQueuePagePrefixRename(indices: [Int], primary: String, secondary: String, invokedPrimary: Bool, tag: String) {
         guard let win = window else { return }
 
         // Resolve display indices to (pbIdx, url) pairs.
@@ -4415,68 +4686,71 @@ extension PlayerWindowController: QueuePageViewDelegate {
         }
         guard !targets.isEmpty else { return }
 
-        // Preflight: plan all renames atomically before mutating any file.
-        let planResult = MediaFileSupport.planPrefixRenames(
-            urls: targets.map(\.url),
-            prefix: prefix
-        )
+        // Apply the toggle/swap transition to each target independently.
+        // Items where calculatePrefixTransition returns nil are no-ops (no change needed).
+        let pendingRenames: [(pbIdx: Int, oldName: String, newName: String)] = targets.compactMap { target in
+            guard let newName = MediaFileSupport.calculatePrefixTransition(
+                originalURL: target.url, primary: primary, secondary: secondary, invokedPrimary: invokedPrimary
+            ) else { return nil }
+            return (pbIdx: target.pbIdx, oldName: target.url.lastPathComponent, newName: newName)
+        }
 
-        switch planResult {
-        case .failure(let failure):
-            let message: String
-            switch failure {
-            case .missingSource(let filename):
-                message = "The file \"\(filename)\" could not be found. No files were renamed."
-            case .invalidNewName(let original):
-                message = "A new filename for \"\(original)\" would be invalid. No files were renamed."
-            case .destinationCollision(let newName):
-                message = "A file named \"\(newName)\" already exists. No files were renamed."
-            case .duplicateDestination(let newName):
-                message = "Two selected files would produce the same destination name \"\(newName)\". No files were renamed."
-            }
-            DebugConsoleController.log(level: .warning, category: "rename",
-                                       message: "\(tag): preflight failed — \(message)")
-            presentRenameAlert(title: "Cannot Rename", message: message, window: win)
+        guard !pendingRenames.isEmpty else {
+            DebugConsoleController.log("rename", "\(tag): all targets unchanged by transition, noop source=queuePage")
+            return
+        }
 
-        case .success(let planned):
-            guard !planned.isEmpty else {
-                DebugConsoleController.log("rename", "\(tag): all targets already prefixed, noop source=queuePage")
+        // Preflight: verify sources exist and destinations don't collide.
+        var seenDestinationPaths = Set<String>()
+        for r in pendingRenames {
+            guard r.pbIdx < playbackSet.count else { continue }
+            let url = playbackSet[r.pbIdx]
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                presentRenameAlert(title: "Cannot Rename",
+                                   message: "The file \"\(r.oldName)\" could not be found. No files were renamed.",
+                                   window: win)
                 return
             }
-
-            // Map source path → pbIdx for post-confirmation execution.
-            let srcPathToPbIdx = Dictionary(
-                uniqueKeysWithValues: targets.map { ($0.url.standardizedFileURL.path, $0.pbIdx) }
-            )
-            let pendingRenames: [(pbIdx: Int, newName: String)] = planned.compactMap { p in
-                guard let pbIdx = srcPathToPbIdx[p.sourceURL.standardizedFileURL.path] else { return nil }
-                return (pbIdx: pbIdx, newName: p.destinationURL.lastPathComponent)
+            let dir = url.deletingLastPathComponent()
+            let destURL = dir.appendingPathComponent(r.newName, isDirectory: false)
+            let destKey = destURL.standardizedFileURL.path
+            if !seenDestinationPaths.insert(destKey).inserted {
+                presentRenameAlert(title: "Cannot Rename",
+                                   message: "Two selected files would produce the same destination name \"\(r.newName)\". No files were renamed.",
+                                   window: win)
+                return
             }
-            guard !pendingRenames.isEmpty else { return }
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                presentRenameAlert(title: "Cannot Rename",
+                                   message: "A file named \"\(r.newName)\" already exists. No files were renamed.",
+                                   window: win)
+                return
+            }
+        }
 
-            if pendingRenames.count == 1 {
-                // Single-file fast path: no confirmation required.
-                let r = pendingRenames[0]
-                DebugConsoleController.log("rename",
-                    "\(tag): \(playbackSet[r.pbIdx].lastPathComponent) → \(r.newName) source=queuePage")
-                renameFile(at: r.pbIdx, to: r.newName)
-            } else {
-                // Multi-file: show confirmation before any filesystem mutation.
-                let count = pendingRenames.count
-                let alert = NSAlert()
-                alert.messageText = "Rename \(count) Files?"
-                alert.informativeText = "Applying prefix \"\(prefix)\" will rename \(count) files on disk. This cannot be undone from within the app."
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "Rename \(count) Files")
-                alert.addButton(withTitle: "Cancel")
-                alert.beginSheetModal(for: win) { [weak self] response in
-                    guard response == .alertFirstButtonReturn, let self = self else { return }
-                    for r in pendingRenames {
-                        guard r.pbIdx < self.playbackSet.count else { continue }
-                        DebugConsoleController.log("rename",
-                            "\(tag): \(self.playbackSet[r.pbIdx].lastPathComponent) → \(r.newName) source=queuePage confirmed")
-                        self.renameFile(at: r.pbIdx, to: r.newName)
-                    }
+        if pendingRenames.count == 1 {
+            // Single-file fast path: no confirmation required.
+            let r = pendingRenames[0]
+            DebugConsoleController.log("rename",
+                "\(tag): \(r.oldName) → \(r.newName) source=queuePage")
+            renameFile(at: r.pbIdx, to: r.newName)
+        } else {
+            // Multi-file: show confirmation before any filesystem mutation.
+            let count = pendingRenames.count
+            let invokedPrefix = invokedPrimary ? primary : secondary
+            let alert = NSAlert()
+            alert.messageText = "Rename \(count) Files?"
+            alert.informativeText = "Applying prefix transition for \"\(invokedPrefix)\" will rename \(count) files on disk. This cannot be undone from within the app."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Rename \(count) Files")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: win) { [weak self] response in
+                guard response == .alertFirstButtonReturn, let self = self else { return }
+                for r in pendingRenames {
+                    guard r.pbIdx < self.playbackSet.count else { continue }
+                    DebugConsoleController.log("rename",
+                        "\(tag): \(r.oldName) → \(r.newName) source=queuePage confirmed")
+                    self.renameFile(at: r.pbIdx, to: r.newName)
                 }
             }
         }
@@ -4504,6 +4778,7 @@ extension PlayerWindowController: QueuePageViewDelegate {
 
     func queuePage(_ view: QueuePageView, didChangeSortMode mode: QueueSortMode) {
         queueSortMode = mode
+        queueSortOrderFrozenAfterRename = false
         if mode != .manual {
             isShuffleOn = false
             isEndlessShuffleOn = false
@@ -4683,6 +4958,7 @@ extension PlayerWindowController: QueuePageViewDelegate {
         // Apply new queue state (does not touch playback).
         playbackSet = newURLs
         displayOrder = Array(0..<newURLs.count)
+        pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = newCurrentDisplayIndex
 
         applyQueueSortIfNeeded(reason: "rescan")
@@ -4726,6 +5002,7 @@ extension PlayerWindowController: QueuePageViewDelegate {
         // After removing, the insertion index shifts down by 1 if to > from
         let insertAt = to > from ? to - 1 : to
         displayOrder.insert(movedItem, at: insertAt)
+        pendingPlayNextSetIndices.removeAll()
 
         // Restore currentDisplayIndex to keep pointing at the same item
         if curSetIdx >= 0, let newIdx = displayOrder.firstIndex(of: curSetIdx) {
@@ -4736,5 +5013,38 @@ extension PlayerWindowController: QueuePageViewDelegate {
         DebugConsoleController.log("queue", "reorder: from=\(from) to=\(to)")
         refreshQueueDisplays()
         logPlaybackQueueSnapshot("queueReorder")
+    }
+
+    /// Appends the entry at `displayIndex` to the pending Play Next chain (FIFO).
+    ///
+    /// Semantics:
+    ///   - First Play Next item becomes the immediate next item.
+    ///   - Subsequent Play Next selections append after the last pending item (FIFO).
+    ///   - Items already in the pending chain or currently playing are safe no-ops.
+    ///   - The current playing media identity and playback are uninterrupted.
+    func queuePage(_ view: QueuePageView, didRequestPlayNextAt displayIndex: Int) {
+        guard currentDisplayIndex >= 0,
+              displayIndex >= 0, displayIndex < displayOrder.count,
+              displayIndex != currentDisplayIndex else { return }
+
+        let curSetIdx = currentSetIndex
+
+        NSLog("[dwb-playback] playNext: displayIdx=%d currentDisplayIdx=%d currentSetIdx=%d pendingCount=%d",
+              displayIndex, currentDisplayIndex, curSetIdx, pendingPlayNextSetIndices.count)
+
+        let changed = PlayNextChainPolicy.applyPlayNext(
+            targetDisplayIndex: displayIndex,
+            displayOrder: &displayOrder,
+            currentDisplayIndex: &currentDisplayIndex,
+            pendingSetIndices: &pendingPlayNextSetIndices
+        )
+
+        guard changed else { return }
+
+        queueSortMode = .manual
+        DebugConsoleController.log("queue",
+            "playNext: moved displayIdx=\(displayIndex) chainCount=\(pendingPlayNextSetIndices.count)")
+        refreshQueueDisplays()
+        logPlaybackQueueSnapshot("queuePlayNext")
     }
 }

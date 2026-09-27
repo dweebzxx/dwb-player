@@ -59,7 +59,7 @@ node_modules/
 .env.*
 !.env.example
 
-# Workflow-internal (Tier 2 — lives in .private/, symlinked in; v2.4.0 exact entries)
+# Workflow-internal (Tier 2 — lives in .dwbplayer-private/, symlinked in; v2.4.0 exact entries)
 /AGENTS.md
 /CLAUDE.md
 /metadata-schema.json
@@ -73,7 +73,7 @@ node_modules/
 /.claude
 /audit/
 /audit
-/.private/
+/.dwbplayer-private/
 /.antigravitycli/
 /build-report-logs/launchers/
 /build-report-logs/logs/

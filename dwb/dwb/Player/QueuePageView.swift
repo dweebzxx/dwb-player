@@ -26,6 +26,9 @@ protocol QueuePageViewDelegate: AnyObject {
     func queuePageDidRequestAddMedia(_ view: QueuePageView)
     /// Called when the user triggers the folder rescan action from the queue footer.
     func queuePageDidRequestRescan(_ view: QueuePageView)
+    /// Called when the user invokes Play Next on a queue entry from the context menu.
+    /// `displayIndex` is the canonical display-order index of the entry to move.
+    func queuePage(_ view: QueuePageView, didRequestPlayNextAt displayIndex: Int)
 }
 
 private final class QueueSharedEdgeDividerView: NSView {
@@ -1646,9 +1649,16 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
     }
 
     private func makeContextMenu(for row: Int) -> NSMenu {
-        guard displayIndex(forVisibleRow: row) != nil else { return NSMenu() }
+        guard let targetDisplayIndex = displayIndex(forVisibleRow: row) else { return NSMenu() }
         let menu = NSMenu()
         addContextItem("Play", action: #selector(contextPlay(_:)), row: row, to: menu)
+        menu.addItem(.separator())
+
+        // Play Next — disabled when nothing is playing or when the target IS the current item.
+        let playNextEnabled = currentDisplayIndex >= 0 && targetDisplayIndex != currentDisplayIndex
+        addContextItem("Play Next", action: #selector(contextPlayNext(_:)), row: row, to: menu,
+                       enabled: playNextEnabled)
+
         menu.addItem(.separator())
         addContextItem("Reveal in Finder", action: #selector(contextReveal(_:)), row: row, to: menu)
         addContextItem("Rename...", action: #selector(contextRename(_:)), row: row, to: menu)
@@ -1657,16 +1667,23 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         return menu
     }
 
-    private func addContextItem(_ title: String, action: Selector, row: Int, to menu: NSMenu) {
+    private func addContextItem(_ title: String, action: Selector, row: Int, to menu: NSMenu,
+                                 enabled: Bool = true) {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         item.representedObject = displayIndex(forVisibleRow: row)
+        item.isEnabled = enabled
         menu.addItem(item)
     }
 
     @objc private func contextPlay(_ sender: NSMenuItem) {
         guard let row = sender.representedObject as? Int else { return }
         delegate?.queuePage(self, didSelectDisplayIndex: row)
+    }
+
+    @objc private func contextPlayNext(_ sender: NSMenuItem) {
+        guard let displayIdx = sender.representedObject as? Int else { return }
+        delegate?.queuePage(self, didRequestPlayNextAt: displayIdx)
     }
 
     @objc private func contextReveal(_ sender: NSMenuItem) {

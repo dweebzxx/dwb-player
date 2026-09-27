@@ -612,6 +612,70 @@ enum MediaFileSupport {
 
         return .success(planned)
     }
+
+    // MARK: - Prefix Transition (toggle/swap)
+
+    /// Calculates the new filename after applying the prefix toggle/swap policy.
+    ///
+    /// Six-state behavior:
+    ///
+    ///   Neither prefix present + Primary  → Add Primary
+    ///   Neither prefix present + Secondary → Add Secondary
+    ///   Primary present        + Primary  → Remove Primary
+    ///   Secondary present      + Secondary → Remove Secondary
+    ///   Primary present        + Secondary → Replace Primary with Secondary
+    ///   Secondary present      + Primary  → Replace Secondary with Primary
+    ///
+    /// Only a recognized configured prefix at the beginning of the stem is
+    /// added, removed, or replaced. Unrelated leading text is preserved exactly.
+    ///
+    /// Returns the complete new filename (stem + extension) to pass to `renameFile(at:to:)`,
+    /// or `nil` when both configured prefixes are empty or when the calculated
+    /// target equals the original filename (no-op).
+    ///
+    /// - Parameters:
+    ///   - originalURL: The file being renamed.
+    ///   - primary:     The configured primary prefix (may be empty).
+    ///   - secondary:   The configured secondary prefix (may be empty).
+    ///   - invokedPrimary: `true` if the Primary action was invoked; `false` for Secondary.
+    static func calculatePrefixTransition(
+        originalURL: URL,
+        primary: String,
+        secondary: String,
+        invokedPrimary: Bool
+    ) -> String? {
+        let invokedPrefix  = invokedPrimary ? primary  : secondary
+        let otherPrefix    = invokedPrimary ? secondary : primary
+
+        guard !invokedPrefix.isEmpty else { return nil }
+
+        let ext  = originalURL.pathExtension
+        let stem = originalURL.deletingPathExtension().lastPathComponent
+
+        // Determine which (if any) configured prefix the stem currently begins with.
+        // Longer-match wins when one prefix is a prefix of the other.
+        let currentIsInvoked  = !invokedPrefix.isEmpty && stem.hasPrefix(invokedPrefix)
+        let currentIsOther    = !otherPrefix.isEmpty   && stem.hasPrefix(otherPrefix)
+
+        let newStem: String
+        if currentIsInvoked {
+            // Same prefix is active → remove it (toggle off).
+            newStem = String(stem.dropFirst(invokedPrefix.count))
+        } else if currentIsOther {
+            // Other prefix is active → replace it with the invoked prefix.
+            let bareRemainder = String(stem.dropFirst(otherPrefix.count))
+            newStem = "\(invokedPrefix)\(bareRemainder)"
+        } else {
+            // No configured prefix present → add the invoked prefix.
+            newStem = "\(invokedPrefix)\(stem)"
+        }
+
+        let newName = ext.isEmpty ? newStem : "\(newStem).\(ext)"
+
+        // Treat identity (no change) as a no-op.
+        guard newName != originalURL.lastPathComponent else { return nil }
+        return newName
+    }
 }
 
 extension CGImage {
