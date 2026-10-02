@@ -122,6 +122,18 @@ class VideoSurfaceView: NSView {
                 case "b":
                     if !event.isARepeat { wc.toggleBookmark() }
                     return
+                case "[":
+                    // Advance audio (play it sooner) — compensates for output devices
+                    // (e.g. Bluetooth headphones) that add fixed audio latency.
+                    wc.decreaseAudioDelay()
+                    return
+                case "]":
+                    // Delay audio further (play it later).
+                    wc.increaseAudioDelay()
+                    return
+                case "\\":
+                    if !event.isARepeat { wc.resetAudioDelay() }
+                    return
                 default:
                     break
                 }

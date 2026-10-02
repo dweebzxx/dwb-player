@@ -12,6 +12,7 @@
 		0720EB27E8C9596F1D6264CB /* MediaFileSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D60217E0E82E386D51B2DC4 /* MediaFileSupport.swift */; };
 		187A8E894D2B5B15C9F35249 /* VolumeOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63017D2AC29A0BF9BFB84F08 /* VolumeOverlayView.swift */; };
 		190DABF8A64E0EA22B100D41 /* SettingsDefaultsRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D085365DFC73A63635B92A8 /* SettingsDefaultsRegistry.swift */; };
+		2703096811254B4A3B4742AB /* QueuePlayNextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3492867ACBF2037E57CC9C74 /* QueuePlayNextTests.swift */; };
 		2799925139210A8707A6FB4A /* MediaIntakeRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68BBA8432D7C01F356F8FBF4 /* MediaIntakeRecoveryTests.swift */; };
 		2A667DBE7CFEB506A784A490 /* DebugConsoleController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDB775812C21C6E67C0D71FB /* DebugConsoleController.swift */; };
 		33B251131EEB2F3140308D6E /* PlaybackCompletionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6B4B7657453BB7C69CDD8D3 /* PlaybackCompletionPolicy.swift */; };
@@ -22,6 +23,7 @@
 		459CF07237979BC40E071B2C /* SettingsDefaultsRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64EDCFFB964EA29427A45D19 /* SettingsDefaultsRegistryTests.swift */; };
 		4CB0271657C7F56A704067ED /* MediaFileSupportCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398D11074CD871056D309939 /* MediaFileSupportCoreTests.swift */; };
 		5161DC6C91D451C91695A1C5 /* IdleAutohideController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CE41086BD2A9BF5BC8A1C77 /* IdleAutohideController.swift */; };
+		5D74E77899167A6B83A6B780 /* AudioDelayBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 949821700F83246EBC5C6E68 /* AudioDelayBarView.swift */; };
 		6A680B77C85E7EE4696A7099 /* QueueDisplayProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78BD398E5D6D86EE50F1E89E /* QueueDisplayProjection.swift */; };
 		6D5F4565185B97C09637F316 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0F865DF708082FD7F8E7693D /* Assets.xcassets */; };
 		791BB13166545B1F4D1A38CC /* PlaybackCompletionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6B4B7657453BB7C69CDD8D3 /* PlaybackCompletionPolicy.swift */; };
@@ -44,6 +46,7 @@
 		DCCF90345368404F7BB5B7CA /* DebugLogSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF08EA8563E65A73E9C934A8 /* DebugLogSanitizer.swift */; };
 		E3FAA7D43D9D251692CA28CB /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46F95A3999534816AD5B65D3 /* SettingsWindowController.swift */; };
 		E755D1737C20FF3617F35C31 /* SettingsDefaultsRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D085365DFC73A63635B92A8 /* SettingsDefaultsRegistry.swift */; };
+		ECD32AE85F7C06322DF15423 /* PrefixTransitionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9240A95CDAEF9983B028B0DB /* PrefixTransitionTests.swift */; };
 		F06B7F1295115573A16F1D64 /* PlaybackCompletionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDECE42D310D0645C598B23F /* PlaybackCompletionPolicyTests.swift */; };
 		F13FEF17C733E407D22605E8 /* BookmarkStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C0AA31D17CA30E62687E44 /* BookmarkStore.swift */; };
 		F1DCB071ED1D9B9BD16097B5 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = A18894B0104EF9D2A3883F18 /* VLCKitSPM */; };
@@ -57,6 +60,7 @@
 		1D085365DFC73A63635B92A8 /* SettingsDefaultsRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDefaultsRegistry.swift; sourceTree = "<group>"; };
 		1D60217E0E82E386D51B2DC4 /* MediaFileSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFileSupport.swift; sourceTree = "<group>"; };
 		25532C3528A96CA5A7CB56EF /* MediaFileSupportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFileSupportCore.swift; sourceTree = "<group>"; };
+		3492867ACBF2037E57CC9C74 /* QueuePlayNextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePlayNextTests.swift; sourceTree = "<group>"; };
 		398D11074CD871056D309939 /* MediaFileSupportCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFileSupportCoreTests.swift; sourceTree = "<group>"; };
 		46F95A3999534816AD5B65D3 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		4AB0FBB5C743B55BE440C890 /* BookmarkStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkStoreTests.swift; sourceTree = "<group>"; };
@@ -69,6 +73,8 @@
 		78BD398E5D6D86EE50F1E89E /* QueueDisplayProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueDisplayProjection.swift; sourceTree = "<group>"; };
 		7C6414EA6B3AA256C6FD5F01 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		8E5582026B4F107CCD6A68F7 /* ScaleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScaleMode.swift; sourceTree = "<group>"; };
+		9240A95CDAEF9983B028B0DB /* PrefixTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrefixTransitionTests.swift; sourceTree = "<group>"; };
+		949821700F83246EBC5C6E68 /* AudioDelayBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDelayBarView.swift; sourceTree = "<group>"; };
 		9E74D7834A29B36B7F6EDB5E /* RailButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RailButton.swift; sourceTree = "<group>"; };
 		A1B57334593EE9F980FF69CA /* VideoSurfaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSurfaceView.swift; sourceTree = "<group>"; };
 		AF08EA8563E65A73E9C934A8 /* DebugLogSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogSanitizer.swift; sourceTree = "<group>"; };
@@ -150,7 +156,9 @@
 				68BBA8432D7C01F356F8FBF4 /* MediaIntakeRecoveryTests.swift */,
 				EDECE42D310D0645C598B23F /* PlaybackCompletionPolicyTests.swift */,
 				F75902B60351E267E8DE8316 /* PlayerCommandValidationTests.swift */,
+				9240A95CDAEF9983B028B0DB /* PrefixTransitionTests.swift */,
 				4C0AE690A098932F9FAD5849 /* QueueDisplayProjectionTests.swift */,
+				3492867ACBF2037E57CC9C74 /* QueuePlayNextTests.swift */,
 				64EDCFFB964EA29427A45D19 /* SettingsDefaultsRegistryTests.swift */,
 			);
 			path = dwbTests;
@@ -169,6 +177,7 @@
 		E4FE327C6C8B5348785C523E /* Player */ = {
 			isa = PBXGroup;
 			children = (
+				949821700F83246EBC5C6E68 /* AudioDelayBarView.swift */,
 				E2649B77CC3AC6019F84AAEB /* BottomRailView.swift */,
 				6CE41086BD2A9BF5BC8A1C77 /* IdleAutohideController.swift */,
 				CC9C943409205144684EC2C7 /* IntakeRecoveryView.swift */,
@@ -300,8 +309,10 @@
 				F06B7F1295115573A16F1D64 /* PlaybackCompletionPolicyTests.swift in Sources */,
 				818DD643081325BB230D43FF /* PlayerCommandValidation.swift in Sources */,
 				BF44CE583EA5756052B618F1 /* PlayerCommandValidationTests.swift in Sources */,
+				ECD32AE85F7C06322DF15423 /* PrefixTransitionTests.swift in Sources */,
 				35A16A15F1B5F3B939EEA05B /* QueueDisplayProjection.swift in Sources */,
 				B7FD4A31234AB08D649B4213 /* QueueDisplayProjectionTests.swift in Sources */,
+				2703096811254B4A3B4742AB /* QueuePlayNextTests.swift in Sources */,
 				E755D1737C20FF3617F35C31 /* SettingsDefaultsRegistry.swift in Sources */,
 				459CF07237979BC40E071B2C /* SettingsDefaultsRegistryTests.swift in Sources */,
 			);
@@ -312,6 +323,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				44C949CABA5D158791A6B674 /* AppDelegate.swift in Sources */,
+				5D74E77899167A6B83A6B780 /* AudioDelayBarView.swift in Sources */,
 				7941090DE500AD244A4C2A0A /* BookmarkStore.swift in Sources */,
 				95652D94CD045360A6F729BA /* BottomRailView.swift in Sources */,
 				2A667DBE7CFEB506A784A490 /* DebugConsoleController.swift in Sources */,

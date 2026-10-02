@@ -74,6 +74,7 @@ class PlayerWindowController: NSWindowController {
     private var videoSurface: VideoSurfaceView!
     private var transport: TransportControlsView!
     private var volumeBar: VolumeBarView!
+    private var audioDelayBar: AudioDelayBarView!
     private var queuePage: QueuePageView!
     private let intakeRecoveryView = IntakeRecoveryView()
     private let centeredTitleLabel = NSTextField(labelWithString: PlayerWindowController.defaultWindowTitle)
@@ -445,6 +446,15 @@ class PlayerWindowController: NSWindowController {
     private var windowMuted = false
     private var lastAppliedAudioState: (volume: Int32, muted: Bool)?
 
+    // MARK: - Per-window audio sync offset (Bluetooth-latency compensation)
+
+    /// Milliseconds of audio delay applied to VLCMediaPlayer.currentAudioPlaybackDelay.
+    /// Positive delays audio further; negative advances it. Seeded from the persisted
+    /// default so a device's dialed-in offset carries over to new windows/videos, but
+    /// each window may then nudge its own live value independently (no shared state).
+    private var windowAudioDelayMs: Int32 = PlayerWindowController.defaultPersistedAudioDelayMs()
+    private var lastAppliedAudioDelayMs: Int32?
+
     // MARK: - Per-window playback speed
 
     private var playbackSpeed: Float = PlaybackSpeedOption.normalRate
@@ -502,6 +512,9 @@ class PlayerWindowController: NSWindowController {
             self?.setVolumeFromBar(vol)
         }
         cv.addSubview(volumeBar)
+
+        audioDelayBar = AudioDelayBarView(frame: .zero)
+        cv.addSubview(audioDelayBar)
 
         queuePage = QueuePageView(frame: .zero)
         queuePage.delegate = self
@@ -594,6 +607,7 @@ class PlayerWindowController: NSWindowController {
         player.delegate = self
         player.drawable = videoSurface
         applyWindowAudioState(reason: "initial-player", force: true)
+        applyAudioDelay(reason: "initial-player", force: true)
         applyPlaybackSpeed(reason: "initial-player")
         transport.controller = self
         transport.player = player
@@ -1002,6 +1016,22 @@ class PlayerWindowController: NSWindowController {
                                  y: barY,
                                  width: barW,
                                  height: barH)
+
+        // Audio sync HUD: stacked directly above the volume HUD so the two never overlap
+        // if both happen to be visible at once.
+        let delayBarW = AudioDelayBarView.preferredSize.width
+        let delayBarH = AudioDelayBarView.preferredSize.height
+        let centeredDelayBarX = transport.frame.midX - delayBarW / 2
+        let delayBarX = min(
+            max(transport.frame.minX, centeredDelayBarX),
+            max(transport.frame.minX, transport.frame.maxX - delayBarW)
+        )
+        let desiredDelayBarY = barY + barH + 10
+        let delayBarY = min(max(0, desiredDelayBarY), max(0, b.height - delayBarH - 12))
+        audioDelayBar.frame = NSRect(x: delayBarX,
+                                     y: delayBarY,
+                                     width: delayBarW,
+                                     height: delayBarH)
 
         // Image display view always matches videoSurface — covers both fullscreen and windowed.
         imageDisplayView?.frame = videoSurface.frame
@@ -3107,6 +3137,10 @@ class PlayerWindowController: NSWindowController {
             // windows. Skip the redundant write; applyWindowAudioState's changed-detection guard
             // handles genuine volume changes correctly without touching the global config lock.
             let appliedAudio = self.applyWindowAudioState(reason: "reuse-player-media-replacement")
+            // Unlike volume, the delay is reapplied unconditionally (force: true) on every
+            // media swap: currentAudioPlaybackDelay is tied to VLC's audio track/demux state,
+            // which the reused player replaces along with the media, not to global config.
+            self.applyAudioDelay(reason: "reuse-player-media-replacement", force: true)
             NSLog("[dwb-playback] playCurrentItem: assignedMedia=%@ reason=%@ restoredVolume=%d",
                   url.lastPathComponent,
                   startReason,
@@ -3379,6 +3413,7 @@ class PlayerWindowController: NSWindowController {
               handshake.expectedSessionID,
               rebuiltPlayer.audio?.volume ?? windowVolume)
         applyWindowAudioState(reason: "handshake-recovery-media-assigned", force: true)
+        applyAudioDelay(reason: "handshake-recovery-media-assigned", force: true)
         applyPlaybackSpeed(reason: "handshake-recovery-media-assigned")
         rebuiltPlayer.play()
         transport.invalidateCachedDisplayState()  // fresh player installed — force full refresh
@@ -3395,6 +3430,7 @@ class PlayerWindowController: NSWindowController {
                                              stopOldPlayer: true)
         freshPlayer.media = VLCMedia(url: url)
         applyWindowAudioState(reason: "fresh-player-media-assigned", force: true)
+        applyAudioDelay(reason: "fresh-player-media-assigned", force: true)
         applyPlaybackSpeed(reason: "fresh-player-media-assigned")
         NSLog("[dwb-playback] autoplayTransition: target=%@ assignedMedia=1 reason=%@",
               url.lastPathComponent,
@@ -3439,6 +3475,7 @@ class PlayerWindowController: NSWindowController {
         transport.controller = self
         transport.player = freshPlayer
         let appliedAudio = applyWindowAudioState(reason: "fresh-player-install", force: true)
+        applyAudioDelay(reason: "fresh-player-install", force: true)
         lastAppliedScaleState = nil   // H4: new player — force VLC scale/crop re-assert.
         applyScaleMode()
         NSLog("[dwb-playback] autoplayTransition: reason=%@ target=%@ newPlayerCreate=1 delegate=1 drawable=1 transport=1 volume=%d scale=%@",
@@ -3840,6 +3877,64 @@ class PlayerWindowController: NSWindowController {
 
     func volumeUp()   { adjustVolume(by: 10)  }
     func volumeDown() { adjustVolume(by: -10) }
+
+    // MARK: - Audio sync offset (Bluetooth-latency compensation)
+
+    private static func defaultPersistedAudioDelayMs() -> Int32 {
+        let key = SettingsWindowController.audioSyncDelayKey
+        guard UserDefaults.standard.object(forKey: key) != nil else { return 0 }
+        return Self.clampedAudioDelayMs(Int32(UserDefaults.standard.integer(forKey: key)))
+    }
+
+    private static func clampedAudioDelayMs(_ ms: Int32) -> Int32 {
+        let range = SettingsWindowController.audioSyncDelayRangeMilliseconds
+        return min(max(ms, range.lowerBound), range.upperBound)
+    }
+
+    private func persistAudioDelayMs(_ ms: Int32) {
+        UserDefaults.standard.set(Int(ms), forKey: SettingsWindowController.audioSyncDelayKey)
+    }
+
+    /// Applies `windowAudioDelayMs` to the live player's currentAudioPlaybackDelay
+    /// (microseconds). Unlike audio.volume, this property does not touch VLCKit's
+    /// global config lock (see P50 in applyWindowAudioState), so no deadlock hazard
+    /// applies here — the changed-guard below is purely to skip redundant writes and
+    /// log spam, matching the codebase's established audio-apply style.
+    @discardableResult
+    private func applyAudioDelay(reason: String, force: Bool = false) -> Int32 {
+        let clamped = Self.clampedAudioDelayMs(windowAudioDelayMs)
+        if clamped != windowAudioDelayMs {
+            windowAudioDelayMs = clamped
+        }
+        if force || lastAppliedAudioDelayMs != clamped {
+            player?.currentAudioPlaybackDelay = Int(clamped) * 1_000
+            lastAppliedAudioDelayMs = clamped
+            DebugConsoleController.log("audio", "delayApply: window=\(debugIdentity) reason=\(reason) delayMs=\(clamped)")
+        }
+        return clamped
+    }
+
+    /// Nudges the audio sync offset by `deltaMs` (positive delays audio further,
+    /// negative advances it), applies it immediately, persists it as the new
+    /// default for future windows/videos, and shows the HUD.
+    func adjustAudioDelay(byMilliseconds deltaMs: Int32) {
+        windowAudioDelayMs = Self.clampedAudioDelayMs(windowAudioDelayMs + deltaMs)
+        let applied = applyAudioDelay(reason: "audio-delay-adjust")
+        persistAudioDelayMs(applied)
+        audioDelayBar.show(milliseconds: applied)
+    }
+
+    func resetAudioDelay() {
+        windowAudioDelayMs = 0
+        let applied = applyAudioDelay(reason: "audio-delay-reset", force: true)
+        persistAudioDelayMs(applied)
+        audioDelayBar.show(milliseconds: applied)
+    }
+
+    var currentAudioDelayMs: Int32 { windowAudioDelayMs }
+
+    func increaseAudioDelay() { adjustAudioDelay(byMilliseconds: SettingsWindowController.audioSyncDelayStepMilliseconds) }
+    func decreaseAudioDelay() { adjustAudioDelay(byMilliseconds: -SettingsWindowController.audioSyncDelayStepMilliseconds) }
 
     // MARK: - Window opacity
 

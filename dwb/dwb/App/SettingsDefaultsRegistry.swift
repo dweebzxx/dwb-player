@@ -30,6 +30,12 @@ enum SettingsDefaultsRegistry {
         static let bottomRailShowVolumeButton = "bottomRailShowVolumeButton"
         static let bottomRailShowBookmarkButton = "bottomRailShowBookmarkButton"
         static let playerWindowOpacity = "playerWindowOpacity"
+        /// Manual audio/video sync offset in milliseconds, applied to
+        /// VLCMediaPlayer.currentAudioPlaybackDelay. Compensates for fixed
+        /// output-device latency (e.g. Bluetooth headphones). Positive delays
+        /// audio further; negative advances it. Persisted as a default so a
+        /// user tunes it once per output device rather than every session.
+        static let audioSyncDelayMilliseconds = "audioSyncDelayMilliseconds"
 
         enum OptionalTransportControl: CaseIterable {
             case stop, volume, shuffle, repeatOne
@@ -54,6 +60,9 @@ enum SettingsDefaultsRegistry {
         static let playerWindowOpacityMin = 0.35
         static let playerWindowOpacityMax = 1.0
         static let playerWindowOpacity = 1.0
+        static let audioSyncDelayMilliseconds: Int32 = 0
+        static let audioSyncDelayStepMilliseconds: Int32 = 50
+        static let audioSyncDelayRangeMilliseconds: ClosedRange<Int32> = -3000...3000
     }
 
     static func defaultValues(reduceMotionDefault: Bool) -> [String: Any] {
@@ -83,6 +92,7 @@ enum SettingsDefaultsRegistry {
             Keys.bottomRailShowVolumeButton: true,
             Keys.bottomRailShowBookmarkButton: true,
             Keys.playerWindowOpacity: Defaults.playerWindowOpacity,
+            Keys.audioSyncDelayMilliseconds: Defaults.audioSyncDelayMilliseconds,
         ]
 
         for control in Keys.OptionalTransportControl.allCases {

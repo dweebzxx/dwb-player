@@ -1,12 +1,13 @@
 import Cocoa
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenuDelegate {
 
     private let maxPlayerWindowCount = 5
 
     var windowControllers: [PlayerWindowController] = []
     private weak var rewindMenuItem: NSMenuItem?
     private weak var forwardMenuItem: NSMenuItem?
+    private weak var audioSyncStatusMenuItem: NSMenuItem?
     private var hasReceivedOpenEventDuringLaunch = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -308,6 +309,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         frontPlayerWindowController?.volumeDown()
     }
 
+    @objc func advanceAudio(_ sender: Any) {
+        frontPlayerWindowController?.decreaseAudioDelay()
+    }
+
+    @objc func delayAudio(_ sender: Any) {
+        frontPlayerWindowController?.increaseAudioDelay()
+    }
+
+    @objc func resetAudioSync(_ sender: Any) {
+        frontPlayerWindowController?.resetAudioDelay()
+    }
+
     @objc func rewind10(_ sender: Any) {
         frontPlayerWindowController?.skipBackward10()
     }
@@ -381,10 +394,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             menuItem.state = frontPlayerWindowController?.isKeepAtTop == true ? .on : .off
         case 31: // Auto-hide Titlebar
             menuItem.state = SettingsWindowController.isAutoHideTitlebarEnabled() ? .on : .off
+        case 41: // Reset Audio Sync — only actionable when an offset is actually set
+            return (frontPlayerWindowController?.currentAudioDelayMs ?? 0) != 0
         default:
             break
         }
         return true
+    }
+
+    /// Refreshes the read-only "Offset: … ms" row the instant the Audio Sync submenu
+    /// opens. It carries no action, so AppKit's automatic validateMenuItem(_:) pass
+    /// (used for the tagged items above) never reaches it — NSMenuDelegate is the hook
+    /// tailored for a submenu's own about-to-open moment instead.
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu.items.contains(where: { $0 === audioSyncStatusMenuItem }) else { return }
+        let ms = frontPlayerWindowController?.currentAudioDelayMs ?? 0
+        let sign = ms > 0 ? "+" : ""
+        audioSyncStatusMenuItem?.title = "Offset: \(sign)\(ms) ms"
     }
 
     private var frontPlayerWindowController: PlayerWindowController? {
@@ -585,6 +611,48 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         speedItem.submenu = speedMenu
         playbackMenu.addItem(speedItem)
+
+        playbackMenu.addItem(.separator())
+
+        // Audio Sync — manual audio/video offset. Compensates for fixed output-device
+        // latency (e.g. Bluetooth headphones) by shifting audio earlier/later relative
+        // to video. Also reachable via the "[" / "]" / "\" keys when the video view has
+        // focus (see VideoSurfaceView.keyDown).
+        let audioSyncItem = NSMenuItem(title: "Audio Sync", action: nil, keyEquivalent: "")
+        let audioSyncMenu = NSMenu(title: "Audio Sync")
+
+        let audioSyncStatusItem = NSMenuItem(title: "Offset: 0 ms", action: nil, keyEquivalent: "")
+        audioSyncStatusItem.isEnabled = false
+        audioSyncStatusItem.tag = 40
+        audioSyncMenu.addItem(audioSyncStatusItem)
+        self.audioSyncStatusMenuItem = audioSyncStatusItem
+
+        audioSyncMenu.addItem(.separator())
+
+        let advanceAudioItem = NSMenuItem(title: "Advance Audio (Play Sooner)",
+                                          action: #selector(advanceAudio(_:)),
+                                          keyEquivalent: "[")
+        advanceAudioItem.target = self
+        audioSyncMenu.addItem(advanceAudioItem)
+
+        let delayAudioItem = NSMenuItem(title: "Delay Audio (Play Later)",
+                                        action: #selector(delayAudio(_:)),
+                                        keyEquivalent: "]")
+        delayAudioItem.target = self
+        audioSyncMenu.addItem(delayAudioItem)
+
+        audioSyncMenu.addItem(.separator())
+
+        let resetAudioSyncItem = NSMenuItem(title: "Reset Audio Sync",
+                                            action: #selector(resetAudioSync(_:)),
+                                            keyEquivalent: "\\")
+        resetAudioSyncItem.target = self
+        resetAudioSyncItem.tag = 41
+        audioSyncMenu.addItem(resetAudioSyncItem)
+
+        audioSyncMenu.delegate = self
+        audioSyncItem.submenu = audioSyncMenu
+        playbackMenu.addItem(audioSyncItem)
 
         // ── Video menu ──────────────────────────────────────────────────────
         let videoItem = NSMenuItem()

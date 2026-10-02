@@ -71,6 +71,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     static let showShuffleKey           = OptionalTransportControl.shuffle.defaultsKey
     static let showRepeatKey            = OptionalTransportControl.repeatOne.defaultsKey
     static let persistedVolumeKey       = SettingsDefaultsRegistry.Keys.persistedVolume
+    /// Manual audio/video sync offset, persisted so it survives across windows and
+    /// launches (a Bluetooth headset's latency is roughly constant per device).
+    static let audioSyncDelayKey                  = SettingsDefaultsRegistry.Keys.audioSyncDelayMilliseconds
+    static let audioSyncDelayStepMilliseconds     = SettingsDefaultsRegistry.Defaults.audioSyncDelayStepMilliseconds
+    static let audioSyncDelayRangeMilliseconds    = SettingsDefaultsRegistry.Defaults.audioSyncDelayRangeMilliseconds
     static let skipDurationKey          = SettingsDefaultsRegistry.Keys.skipDurationSeconds
     static let defaultSkipDurationSeconds = SettingsDefaultsRegistry.Defaults.skipDurationSeconds
     /// Titlebar auto-hide in windowed mode. Default: false.
