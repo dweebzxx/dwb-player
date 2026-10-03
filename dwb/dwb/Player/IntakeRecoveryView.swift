@@ -5,7 +5,6 @@ final class IntakeRecoveryView: NSView {
     var dismissHandler: (() -> Void)?
     var layoutDidChange: (() -> Void)?
 
-    private let backgroundView = NSVisualEffectView()
     private let statusImageView = NSImageView()
     private let progressIndicator = NSProgressIndicator()
     private let titleLabel = NSTextField(labelWithString: "")
@@ -16,12 +15,48 @@ final class IntakeRecoveryView: NSView {
     private var actions: [MediaIntakeRecoveryAction] = []
     private var presentation: MediaIntakeRecoveryPresentation?
 
+    private enum Metrics {
+        static let paddingTop: CGFloat = 16
+        static let paddingRight: CGFloat = 16
+        static let paddingBottom: CGFloat = 16
+        static let paddingLeft: CGFloat = 18
+        static let statusIconSize: CGFloat = 22
+        static let iconTextGap: CGFloat = 10
+        static let titleHeight: CGFloat = 18
+        static let messageHeight: CGFloat = 30
+        static let titleMessageGap: CGFloat = 4
+        static let buttonHeight: CGFloat = 24
+        static let buttonGap: CGFloat = 6
+        static let closeSize: CGFloat = 24
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupViews()
+        PlayerAccessibilityEnvironment.observeChanges(self, selector: #selector(accessibilityOptionsChanged))
     }
 
     required init?(coder: NSCoder) { fatalError("programmatic only") }
+
+    deinit {
+        PlayerAccessibilityEnvironment.stopObserving(self)
+    }
+
+    @objc private func accessibilityOptionsChanged() {
+        applyContrastColors()
+        // Action buttons carry contrast-dependent borders and text; rebuild them in place.
+        if let presentation, !actionButtons.isEmpty {
+            rebuildActionButtons(for: presentation.actions)
+            needsLayout = true
+        }
+    }
+
+    /// Increase Contrast lifts the secondary text roles one step.
+    private func applyContrastColors() {
+        let increased = PlayerAccessibilityEnvironment.increaseContrast
+        messageLabel.textColor = increased ? DWBColor.textPrimary : DWBColor.textSecondary
+        detailsLabel.textColor = increased ? DWBColor.textSecondary : DWBColor.textTertiary
+    }
 
     func present(_ presentation: MediaIntakeRecoveryPresentation) {
         self.presentation = presentation
@@ -51,58 +86,57 @@ final class IntakeRecoveryView: NSView {
     }
 
     func preferredHeight(for width: CGFloat) -> CGFloat {
-        guard let presentation else { return 154 }
         let compact = width < 380
+        let actionCount = presentation?.actions.count ?? 0
         let actionBlockHeight: CGFloat
-        if presentation.actions.isEmpty {
+        if actionCount == 0 {
             actionBlockHeight = 0
         } else if compact {
-            actionBlockHeight = CGFloat(presentation.actions.count) * 28
-                + CGFloat(max(0, presentation.actions.count - 1)) * 6
+            actionBlockHeight = CGFloat(actionCount) * Metrics.buttonHeight
+                + CGFloat(max(0, actionCount - 1)) * Metrics.buttonGap
         } else {
-            actionBlockHeight = 28
+            actionBlockHeight = Metrics.buttonHeight
         }
         let detailsHeight: CGFloat = detailsLabel.isHidden ? 0 : 42
-        return max(118, 104 + actionBlockHeight + detailsHeight)
+        let actionGap: CGFloat = actionCount == 0 ? 0 : 12
+        return Metrics.paddingTop + Metrics.titleHeight + Metrics.titleMessageGap + Metrics.messageHeight
+            + actionGap + actionBlockHeight + detailsHeight + Metrics.paddingBottom
     }
 
     override func layout() {
         super.layout()
-        backgroundView.frame = bounds
-        let inset: CGFloat = 14
-        let closeSize: CGFloat = 24
-        dismissButton.frame = NSRect(x: bounds.width - inset - closeSize,
-                                     y: bounds.height - inset - closeSize,
-                                     width: closeSize,
-                                     height: closeSize)
-        let statusSize: CGFloat = 24
-        statusImageView.frame = NSRect(x: inset,
-                                       y: bounds.height - inset - statusSize,
-                                       width: statusSize,
-                                       height: statusSize)
+        let top = bounds.height - Metrics.paddingTop
+        dismissButton.frame = NSRect(x: bounds.width - Metrics.paddingRight - Metrics.closeSize,
+                                     y: top - Metrics.closeSize,
+                                     width: Metrics.closeSize,
+                                     height: Metrics.closeSize)
+        statusImageView.frame = NSRect(x: Metrics.paddingLeft,
+                                       y: top - Metrics.statusIconSize,
+                                       width: Metrics.statusIconSize,
+                                       height: Metrics.statusIconSize)
         progressIndicator.frame = statusImageView.frame.insetBy(dx: 3, dy: 3)
-        let textLeading = inset + statusSize + 10
+        let textLeading = Metrics.paddingLeft + Metrics.statusIconSize + Metrics.iconTextGap
         titleLabel.frame = NSRect(x: textLeading,
-                                  y: bounds.height - inset - 20,
+                                  y: top - Metrics.titleHeight,
                                   width: max(0, dismissButton.frame.minX - textLeading - 8),
-                                  height: 20)
+                                  height: Metrics.titleHeight)
         messageLabel.frame = NSRect(x: textLeading,
-                                    y: bounds.height - inset - 58,
-                                    width: max(0, bounds.width - textLeading - inset),
-                                    height: 34)
+                                    y: top - Metrics.titleHeight - Metrics.titleMessageGap - Metrics.messageHeight,
+                                    width: max(0, bounds.width - textLeading - Metrics.paddingRight),
+                                    height: Metrics.messageHeight)
 
-        let buttonHeight: CGFloat = 28
+        let buttonHeight = Metrics.buttonHeight
         let compact = bounds.width < 380
         let buttonBlockHeight: CGFloat
         if compact {
             buttonBlockHeight = actionButtons.isEmpty
                 ? 0
-                : CGFloat(actionButtons.count) * buttonHeight + CGFloat(max(0, actionButtons.count - 1)) * 6
+                : CGFloat(actionButtons.count) * buttonHeight + CGFloat(max(0, actionButtons.count - 1)) * Metrics.buttonGap
             for (index, button) in actionButtons.enumerated() {
-                let y = inset + CGFloat(actionButtons.count - index - 1) * (buttonHeight + 6)
+                let y = Metrics.paddingBottom + CGFloat(actionButtons.count - index - 1) * (buttonHeight + Metrics.buttonGap)
                 button.frame = NSRect(x: textLeading,
                                       y: y,
-                                      width: max(0, bounds.width - textLeading - inset),
+                                      width: max(0, bounds.width - textLeading - Metrics.paddingRight),
                                       height: buttonHeight)
             }
         } else {
@@ -110,7 +144,7 @@ final class IntakeRecoveryView: NSView {
             var x = textLeading
             for button in actionButtons {
                 let width = max(78, ceil(button.intrinsicContentSize.width) + 20)
-                button.frame = NSRect(x: x, y: inset, width: width, height: buttonHeight)
+                button.frame = NSRect(x: x, y: Metrics.paddingBottom, width: width, height: buttonHeight)
                 x += width + 8
             }
         }
@@ -118,26 +152,22 @@ final class IntakeRecoveryView: NSView {
         detailsLabel.frame = detailsLabel.isHidden
             ? .zero
             : NSRect(x: textLeading,
-                     y: inset + buttonBlockHeight + 8,
-                     width: max(0, bounds.width - textLeading - inset),
+                     y: Metrics.paddingBottom + buttonBlockHeight + 8,
+                     width: max(0, bounds.width - textLeading - Metrics.paddingRight),
                      height: 34)
     }
 
     private func setupViews() {
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = DWBMetrics.radiusCard
         layer?.masksToBounds = true
         layer?.borderWidth = 1
-        layer?.borderColor = PlayerBrandColors.darkOchre.withAlphaComponent(0.55).cgColor
+        layer?.borderColor = DWBColor.cautionFill.cgColor
+        layer?.backgroundColor = DWBColor.surfaceElevated.cgColor
         setAccessibilityRole(.group)
         setAccessibilityIdentifier("player.intakeRecovery")
         isHidden = true
         setAccessibilityElement(false)
-
-        backgroundView.material = .hudWindow
-        backgroundView.blendingMode = .withinWindow
-        backgroundView.state = .active
-        addSubview(backgroundView)
 
         statusImageView.imageScaling = .scaleProportionallyDown
         statusImageView.setAccessibilityElement(false)
@@ -151,21 +181,21 @@ final class IntakeRecoveryView: NSView {
         addSubview(progressIndicator)
 
         titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
-        titleLabel.textColor = .labelColor
+        titleLabel.textColor = DWBColor.textPrimary
         titleLabel.setAccessibilityElement(false)
         addSubview(titleLabel)
 
         messageLabel.font = .systemFont(ofSize: 11.5)
-        messageLabel.textColor = .secondaryLabelColor
         messageLabel.maximumNumberOfLines = 2
         messageLabel.setAccessibilityElement(false)
         addSubview(messageLabel)
 
         detailsLabel.font = .systemFont(ofSize: 10.5)
-        detailsLabel.textColor = .tertiaryLabelColor
         detailsLabel.maximumNumberOfLines = 2
         detailsLabel.setAccessibilityElement(false)
         addSubview(detailsLabel)
+
+        applyContrastColors()
 
         dismissButton.isBordered = false
         dismissButton.bezelStyle = .regularSquare
@@ -197,20 +227,20 @@ final class IntakeRecoveryView: NSView {
             button.layer?.borderWidth = 1
             if index == 0 {
                 button.isBordered = false
-                button.layer?.backgroundColor = PlayerBrandColors.periwinkle.withAlphaComponent(0.72).cgColor
-                button.layer?.borderColor = PlayerBrandColors.periwinkleLight.withAlphaComponent(0.50).cgColor
-                button.contentTintColor = .white
+                button.layer?.backgroundColor = PlayerTheme.current.accentFill.cgColor
+                button.layer?.borderColor = PlayerTheme.current.accentFill.cgColor
+                button.contentTintColor = DWBColor.textOnFill
                 button.font = .systemFont(ofSize: 11, weight: .semibold)
             } else if action == .showDetails {
                 button.isBordered = false
                 button.layer?.backgroundColor = NSColor.clear.cgColor
                 button.layer?.borderColor = NSColor.clear.cgColor
-                button.contentTintColor = .secondaryLabelColor
+                button.contentTintColor = DWBAppearance.shared.textSecondary
             } else {
                 button.isBordered = false
-                button.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.075).cgColor
-                button.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-                button.contentTintColor = .labelColor
+                button.layer?.backgroundColor = DWBColor.overlayHover.cgColor
+                button.layer?.borderColor = DWBAppearance.shared.border.cgColor
+                button.contentTintColor = DWBColor.textPrimary
             }
             addSubview(button)
             return button
@@ -225,22 +255,22 @@ final class IntakeRecoveryView: NSView {
         switch presentation.style {
         case .progress:
             symbolName = "magnifyingglass"
-            foreground = PlayerBrandColors.periwinkleLight
-            border = PlayerBrandColors.periwinkle
+            foreground = PlayerTheme.current.accentText
+            border = PlayerTheme.current.accentFill
         case .warning:
             symbolName = "exclamationmark.triangle.fill"
-            foreground = PlayerBrandColors.darkOchreLight
-            border = PlayerBrandColors.darkOchre
+            foreground = DWBColor.cautionText
+            border = DWBColor.cautionFill
         case .error:
             symbolName = "xmark.octagon.fill"
-            foreground = PlayerBrandColors.crimsonLight
-            border = PlayerBrandColors.crimson
+            foreground = DWBColor.errorText
+            border = DWBColor.errorFill
         }
-        let configuration = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        let configuration = NSImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
         let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
         statusImageView.image = image?.withSymbolConfiguration(configuration) ?? image
         statusImageView.contentTintColor = foreground
-        layer?.borderColor = border.withAlphaComponent(0.58).cgColor
+        layer?.borderColor = border.cgColor
         progressIndicator.isHidden = presentation.style != .progress
         statusImageView.isHidden = presentation.style == .progress
         if presentation.style == .progress {

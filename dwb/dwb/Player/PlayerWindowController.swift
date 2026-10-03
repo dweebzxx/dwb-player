@@ -136,12 +136,16 @@ class PlayerWindowController: NSWindowController {
     // Generation tokens prevent stale fade-out completion handlers from re-hiding
     // a view that has already been shown again.
     private var hudShowGeneration          = 0
-    private var titleOverlayShowGeneration = 0
 
     // MARK: - Video title overlay
 
-    private let videoTitleOverlay    = NSTextField(labelWithString: "")
-    private var titleOverlayHideWork: DispatchWorkItem?
+    private let videoTitleOverlay    = TitleOverlayView()
+
+    // MARK: - Transient messages over the video
+
+    private let failureMessageView   = FailureMessageView()
+    private let undoToastView        = UndoToastView()
+    private let dropZoneOverlay      = DropZoneOverlayView()
 
     // MARK: - Keep-at-top
 
@@ -212,6 +216,16 @@ class PlayerWindowController: NSWindowController {
     /// Ordered pending Play Next chain (FIFO) stored as set indices into `playbackSet`.
     private var pendingPlayNextSetIndices: [Int] = []
 
+    /// The most recent marker-prefix rename in this window. It is deliberately
+    /// not shared between player windows and is cleared after one undo attempt.
+    private var markerRenameUndoState = MarkerRenameUndoState() {
+        didSet { queuePage?.isUndoAvailable = markerRenameUndoState.canUndo }
+    }
+
+    /// Standardized paths of files whose playback failed in this window. The Queue Page
+    /// marks them as failed; the set never changes playback, skipping, or the queue.
+    private var failedPlaybackPaths = Set<String>()
+
     /// Index into `playbackSet` for the item currently playing.
     var currentSetIndex: Int {
         guard currentDisplayIndex >= 0, currentDisplayIndex < displayOrder.count else { return -1 }
@@ -230,6 +244,10 @@ class PlayerWindowController: NSWindowController {
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
               !isDirectory.boolValue else { return false }
         return true
+    }
+
+    var canUndoMarkerRename: Bool {
+        markerRenameUndoState.canUndo
     }
 
     var hasPrevious: Bool { currentDisplayIndex > 0 }
@@ -429,7 +447,6 @@ class PlayerWindowController: NSWindowController {
     private let transportHeight: CGFloat = 48
 
     // M3: cached hot-settings flags — refreshed in notification handlers when settings change.
-    private var autoHideTransportEnabled: Bool = UserDefaults.standard.bool(forKey: SettingsWindowController.autoHideKey)
     private var autoHideTitlebarEnabled: Bool = UserDefaults.standard.bool(forKey: SettingsWindowController.autoHideTitlebarKey)
     private var completeVideoWindowModeEnabled: Bool = UserDefaults.standard.bool(forKey: SettingsWindowController.completeVideoWindowModeKey)
     private var configuredSkipDurationMs: Int = SettingsWindowController.currentSkipDurationSeconds() * 1_000
@@ -437,7 +454,6 @@ class PlayerWindowController: NSWindowController {
     private var configuredImageDurationSeconds: Double = SettingsWindowController.currentImageDurationSeconds()
     private var configuredGIFLoopCount: Int = SettingsWindowController.currentGIFLoopCount()
     private var configuredShowTitleOverlay: Bool = SettingsWindowController.isShowTitleOverlayEnabled()
-    private var configuredVideoPageDButtonEnabled: Bool = SettingsWindowController.isVideoPageDButtonEnabled()
     private var gifDurationFallbackLoggedPaths: Set<String> = []
 
     // MARK: - Per-window audio state
@@ -520,22 +536,17 @@ class PlayerWindowController: NSWindowController {
         queuePage.delegate = self
         queuePage.isHidden = true
         queuePage.isCustomPrefixRenameEnabled = SettingsWindowController.isCustomPrefixQueuePageEnabled()
+        queuePage.isUndoAvailable = markerRenameUndoState.canUndo
         cv.addSubview(queuePage)
 
-        // Video title overlay — topmost subview so it appears above the transport HUD.
-        videoTitleOverlay.isEditable      = false
-        videoTitleOverlay.isBordered      = false
-        videoTitleOverlay.drawsBackground = false
-        videoTitleOverlay.isSelectable    = false
-        videoTitleOverlay.alignment       = .center
-        videoTitleOverlay.lineBreakMode   = .byTruncatingMiddle
-        videoTitleOverlay.alphaValue      = 0
-        videoTitleOverlay.isHidden        = true
-        videoTitleOverlay.wantsLayer      = true
-        videoTitleOverlay.layer?.cornerRadius = 8
-        videoTitleOverlay.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.38).cgColor
-        videoTitleOverlay.layer?.masksToBounds = true
-        videoTitleOverlay.setAccessibilityIdentifier("player.titleOverlay")
+        // Undo toast and failure message sit above the rail and HUDs.
+        undoToastView.onUndo = { [weak self] in
+            self?.undoLastMarkerRename()
+        }
+        cv.addSubview(undoToastView)
+        cv.addSubview(failureMessageView)
+
+        // Video title overlay — above the transport HUD.
         cv.addSubview(videoTitleOverlay)
 
         intakeRecoveryView.actionHandler = { [weak self] action in
@@ -548,6 +559,9 @@ class PlayerWindowController: NSWindowController {
             self?.layoutPlayerViews()
         }
         cv.addSubview(intakeRecoveryView)
+
+        // Drop zone covers the video area while a valid drag is over it.
+        cv.addSubview(dropZoneOverlay)
 
         self.window = win
         win.delegate = self
@@ -566,7 +580,7 @@ class PlayerWindowController: NSWindowController {
         win.titleVisibility = .hidden
 
         centeredTitleLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        centeredTitleLabel.textColor = .labelColor
+        centeredTitleLabel.textColor = DWBColor.textPrimary
         centeredTitleLabel.alignment = .center
         centeredTitleLabel.lineBreakMode = .byTruncatingMiddle
         centeredTitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -617,12 +631,6 @@ class PlayerWindowController: NSWindowController {
     // MARK: - Settings observation
 
     private func observeSettings() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(autoHideSettingDidChange),
-            name: .autoHideSettingChanged,
-            object: nil
-        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(transportVisibilityDidChange),
@@ -680,12 +688,6 @@ class PlayerWindowController: NSWindowController {
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(videoPageCustomPrefixButtonSettingDidChange),
-            name: .videoPageCustomPrefixButtonSettingChanged,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
             selector: #selector(customPrefixValueDidChange),
             name: .customPrefixValueChanged,
             object: nil
@@ -718,23 +720,6 @@ class PlayerWindowController: NSWindowController {
             current = item.superview
         }
         return false
-    }
-
-    @objc private func autoHideSettingDidChange() {
-        autoHideTransportEnabled = UserDefaults.standard.bool(forKey: SettingsWindowController.autoHideKey)  // M3
-        guard !isFullscreen else { return }
-        if transport.isUsingUnifiedBottomRail {
-            transport.noteChromeActivity()
-            return
-        }
-        if autoHideTransportEnabled {
-            scheduleHide()
-        } else {
-            hideHUDTimer?.invalidate()
-            transport.isHidden = false
-            transport.setBackdropActive(true)
-            transport.alphaValue = 1.0
-        }
     }
 
     func noteChromeActivity() {
@@ -854,11 +839,6 @@ class PlayerWindowController: NSWindowController {
         queuePage.isCustomPrefixRenameEnabled = SettingsWindowController.isCustomPrefixQueuePageEnabled()
     }
 
-    @objc private func videoPageCustomPrefixButtonSettingDidChange() {
-        configuredVideoPageDButtonEnabled = SettingsWindowController.isCustomPrefixVideoPageEnabled()
-        DebugConsoleController.log("settings", "customPrefixVideoPage=\(configuredVideoPageDButtonEnabled)")
-    }
-
     @objc private func customPrefixValueDidChange() {
         if isQueuePageOpen { refreshQueuePage() }
     }
@@ -918,7 +898,14 @@ class PlayerWindowController: NSWindowController {
             return
         }
         DebugConsoleController.log("rename", "customPrefix: \(url.lastPathComponent) → \(newName) source=\(source)")
-        renameFile(at: currentSetIndex, to: newName)
+        if renameFile(at: currentSetIndex, to: newName) {
+            recordMarkerRename(entries: [
+                MarkerRenameUndoEntry(
+                    originalURL: url,
+                    renamedURL: url.deletingLastPathComponent().appendingPathComponent(newName)
+                )
+            ])
+        }
     }
 
     func performSecondaryCustomPrefixRenameCurrentItem(source: String = "videoPage") {
@@ -938,7 +925,14 @@ class PlayerWindowController: NSWindowController {
             return
         }
         DebugConsoleController.log("rename", "customPrefixSecondary: \(url.lastPathComponent) → \(newName) source=\(source)")
-        renameFile(at: currentSetIndex, to: newName)
+        if renameFile(at: currentSetIndex, to: newName) {
+            recordMarkerRename(entries: [
+                MarkerRenameUndoEntry(
+                    originalURL: url,
+                    renamedURL: url.deletingLastPathComponent().appendingPathComponent(newName)
+                )
+            ])
+        }
     }
 
     // MARK: - Layout
@@ -1009,8 +1003,9 @@ class PlayerWindowController: NSWindowController {
             max(transport.frame.minX, centeredBarX),
             max(transport.frame.minX, transport.frame.maxX - barW)
         )
-        let scrubberTop = transport.frame.minY + transport.unifiedBottomRailHeight
-        let desiredBarY = scrubberTop + 10
+        // The HUD stack starts above the undo toast, which sits just above the rail.
+        let railTop = transport.frame.minY + transport.unifiedBottomRailHeight
+        let desiredBarY = railTop + HUDStackMetrics.bottomOffsetAboveRail
         let barY = min(max(0, desiredBarY), max(0, b.height - barH - 12))
         volumeBar.frame = NSRect(x: barX,
                                  y: barY,
@@ -1026,7 +1021,7 @@ class PlayerWindowController: NSWindowController {
             max(transport.frame.minX, centeredDelayBarX),
             max(transport.frame.minX, transport.frame.maxX - delayBarW)
         )
-        let desiredDelayBarY = barY + barH + 10
+        let desiredDelayBarY = barY + barH + HUDStackMetrics.gap
         let delayBarY = min(max(0, desiredDelayBarY), max(0, b.height - delayBarH - 12))
         audioDelayBar.frame = NSRect(x: delayBarX,
                                      y: delayBarY,
@@ -1042,72 +1037,108 @@ class PlayerWindowController: NSWindowController {
         let recoveryHeight = min(preferredRecoveryHeight, availableRecoveryHeight)
         intakeRecoveryView.frame = NSRect(
             x: 16,
-            y: 96,
+            y: transport.unifiedBottomRailHeight + 12,
             width: recoveryWidth,
             height: recoveryHeight
         )
 
         applyScaleMode()
         positionVideoTitleOverlay()
+        positionFailureMessage()
+        positionUndoToast()
+        positionDropZone()
     }
 
     // MARK: - Video title overlay
 
-    /// Show a transient title/status message at the top-center of the player area.
-    /// Cancels and restarts any existing overlay timer so rapid track changes
+    /// Show a transient title message at the top-center of the player area.
+    /// Restarts the hold when called again so rapid track changes
     /// don't stack multiple hide timers.
     func showVideoTitleOverlay(title: String, duration: TimeInterval = 5.0) {
-        titleOverlayHideWork?.cancel()
-        titleOverlayHideWork = nil
-        titleOverlayShowGeneration += 1
-        let gen = titleOverlayShowGeneration
-
         let availableWidth = videoSurface?.frame.width ?? window?.contentView?.bounds.width ?? 800
-        let fontSize: CGFloat = availableWidth < 560 ? 22 : 26
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.72)
-        shadow.shadowBlurRadius = 3
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-        let titleOverlayAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize, weight: .semibold),
-            .foregroundColor: NSColor.white,
-            .shadow: shadow,
-        ]
-        videoTitleOverlay.attributedStringValue = NSAttributedString(string: title,
-                                                                      attributes: titleOverlayAttrs)
-        videoTitleOverlay.setAccessibilityLabel(title)
+        videoTitleOverlay.configure(title: title, videoWidth: availableWidth)
         positionVideoTitleOverlay()
-        videoTitleOverlay.isHidden = false
-        videoTitleOverlay.alphaValue = 1.0
-
-        let work = DispatchWorkItem { [weak self] in
-            guard let self = self else { return }
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.5
-                self.videoTitleOverlay.animator().alphaValue = 0
-            } completionHandler: { [weak self] in
-                guard let self = self, self.titleOverlayShowGeneration == gen else { return }
-                self.videoTitleOverlay.isHidden = true
-            }
-        }
-        titleOverlayHideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
+        videoTitleOverlay.present(hold: duration)
     }
 
     private func positionVideoTitleOverlay() {
         guard videoTitleOverlay.superview != nil else { return }
         let videoFrame = videoSurface?.frame ?? .zero
         guard videoFrame.width > 0, videoFrame.height > 0 else { return }
-        let overlayH: CGFloat = videoFrame.width < 560 ? 38 : 42
-        let maximumWidth = max(0, min(videoFrame.width - 32, 800))
-        let measuredWidth = ceil(videoTitleOverlay.attributedStringValue.size().width) + 30
-        let overlayW = min(maximumWidth, measuredWidth)
+        let overlayH = videoTitleOverlay.preferredHeight
+        let overlayW = videoTitleOverlay.preferredWidth
         videoTitleOverlay.frame = NSRect(
-            x: videoFrame.minX + (videoFrame.width - overlayW) / 2,
-            y: videoFrame.maxY - 20 - overlayH,
+            x: videoFrame.minX + ((videoFrame.width - overlayW) / 2).rounded(),
+            y: videoFrame.maxY - TitleOverlayMetrics.topInset - overlayH,
             width: overlayW,
             height: overlayH
         )
+    }
+
+    // MARK: - Failure message, undo toast, drop zone
+
+    private func positionFailureMessage() {
+        guard failureMessageView.superview != nil else { return }
+        let videoFrame = videoSurface?.frame ?? .zero
+        guard videoFrame.width > 0, videoFrame.height > 0 else { return }
+        let width = failureMessageView.preferredWidth(maxWidth: videoFrame.width - 32)
+        failureMessageView.frame = NSRect(
+            x: videoFrame.minX + ((videoFrame.width - width) / 2).rounded(),
+            y: videoFrame.maxY - FailureMessageMetrics.topInset - FailureMessageMetrics.height,
+            width: width,
+            height: FailureMessageMetrics.height
+        )
+    }
+
+    private func positionUndoToast() {
+        guard undoToastView.superview != nil else { return }
+        let videoFrame = videoSurface?.frame ?? .zero
+        guard videoFrame.width > 0, videoFrame.height > 0 else { return }
+        let width = undoToastView.preferredWidth(maxWidth: videoFrame.width - 32)
+        undoToastView.frame = NSRect(
+            x: videoFrame.minX + ((videoFrame.width - width) / 2).rounded(),
+            y: videoFrame.minY + UndoToastMetrics.bottomInset,
+            width: width,
+            height: UndoToastMetrics.height
+        )
+    }
+
+    private func positionDropZone() {
+        guard dropZoneOverlay.superview != nil else { return }
+        let videoFrame = videoSurface?.frame ?? .zero
+        dropZoneOverlay.frame = videoFrame.insetBy(dx: DropZoneCopy.inset, dy: DropZoneCopy.inset)
+    }
+
+    /// Called by the video and image surfaces when a valid drag enters.
+    func showDropZone(fileCount: Int, folderCount: Int) {
+        positionDropZone()
+        dropZoneOverlay.present(fileCount: fileCount, folderCount: folderCount)
+    }
+
+    /// Called when the drag exits, ends, or drops.
+    func hideDropZone() {
+        dropZoneOverlay.dismiss()
+    }
+
+    private func showUndoToast(renamedTo filename: String) {
+        undoToastView.present(renamedTo: filename)
+        positionUndoToast()
+    }
+
+    private func hideUndoToast() {
+        undoToastView.dismiss()
+    }
+
+    /// Records a completed marker rename for Command-Z. A rename of one file
+    /// also shows the undo toast; a multi-file rename shows none, and clears
+    /// any toast left over from an earlier rename.
+    private func recordMarkerRename(entries: [MarkerRenameUndoEntry]) {
+        markerRenameUndoState.record(entries: entries)
+        if UndoToastMetrics.shouldShow(forRenamedFileCount: entries.count), let entry = entries.first {
+            showUndoToast(renamedTo: entry.renamedURL.lastPathComponent)
+        } else {
+            hideUndoToast()
+        }
     }
 
     // MARK: - Keep-at-top
@@ -1644,7 +1675,8 @@ class PlayerWindowController: NSWindowController {
                 displayName: url.lastPathComponent,
                 duration: dur,
                 fileSize: size,
-                isBookmarked: BookmarkStore.shared.isBookmarked(url: url)
+                isBookmarked: BookmarkStore.shared.isBookmarked(url: url),
+                isFailed: failedPlaybackPaths.contains(url.standardizedFileURL.path)
             ))
         }
 
@@ -1719,6 +1751,7 @@ class PlayerWindowController: NSWindowController {
 
     func removeAllQueueItems(source: String = "menu") {
         cancelPendingFolderScan()
+        failedPlaybackPaths.removeAll()
         guard !playbackSet.isEmpty || !displayOrder.isEmpty else { return }
         NSLog("[dwb-playback] removeAll: source=%@ clearing entire queue (count=%d)", source, playbackSet.count)
         DebugConsoleController.log("queue", "removeAll: source=\(source) count=\(playbackSet.count)")
@@ -1809,9 +1842,10 @@ class PlayerWindowController: NSWindowController {
     }
 
     /// Core rename logic: moves the file on disk and updates all in-memory references.
-    private func renameFile(at playbackSetIndex: Int, to newName: String) {
+    @discardableResult
+    private func renameFile(at playbackSetIndex: Int, to newName: String) -> Bool {
         guard playbackSetIndex >= 0, playbackSetIndex < playbackSet.count,
-              let win = window else { return }
+              let win = window else { return false }
 
         let url    = playbackSet[playbackSetIndex]
         let dir    = url.deletingLastPathComponent()
@@ -1820,7 +1854,7 @@ class PlayerWindowController: NSWindowController {
             presentRenameAlert(title: "Cannot Rename",
                                message: "Enter a valid filename. The extension is preserved automatically, and filenames cannot contain path separators.",
                                window: win)
-            return
+            return false
         }
         let newURL = dir.appendingPathComponent(validatedName, isDirectory: false)
 
@@ -1829,12 +1863,12 @@ class PlayerWindowController: NSWindowController {
             presentRenameAlert(title: "Cannot Rename",
                                message: "The original file could not be found.",
                                window: win)
-            return
+            return false
         }
 
         guard newURL.path != url.path else {
             DebugConsoleController.log("rename", "noop: unchanged file=\(url.lastPathComponent)")
-            return
+            return false
         }
 
         if FileManager.default.fileExists(atPath: newURL.path) {
@@ -1842,7 +1876,7 @@ class PlayerWindowController: NSWindowController {
             presentRenameAlert(title: "Cannot Rename",
                                message: "A file named \"\(validatedName)\" already exists in this folder.",
                                window: win)
-            return
+            return false
         }
 
         do {
@@ -1852,20 +1886,31 @@ class PlayerWindowController: NSWindowController {
             presentRenameAlert(title: "Rename Failed",
                                message: error.localizedDescription,
                                window: win)
-            return
+            return false
         }
 
         DebugConsoleController.log("rename", "success: \(url.lastPathComponent) → \(validatedName)")
-        // Update master list and caches
-        playbackSet[playbackSetIndex] = newURL
-        if let cachedDuration = durationCache.removeValue(forKey: url) {
+        updateRenamedQueueReferences(from: url, to: newURL)
+        return true
+    }
+
+    private func updateRenamedQueueReferences(from oldURL: URL, to newURL: URL) {
+        let matchingIndices = playbackSet.indices.filter {
+            playbackSet[$0].standardizedFileURL.path == oldURL.standardizedFileURL.path
+        }
+        guard !matchingIndices.isEmpty else { return }
+
+        for index in matchingIndices {
+            playbackSet[index] = newURL
+        }
+        if let cachedDuration = durationCache.removeValue(forKey: oldURL) {
             durationCache[newURL] = cachedDuration
         }
-        if let cachedSeconds = durationSecondsCache.removeValue(forKey: url) {
+        if let cachedSeconds = durationSecondsCache.removeValue(forKey: oldURL) {
             durationSecondsCache[newURL] = cachedSeconds
         }
 
-        if playbackSetIndex == currentSetIndex {
+        if currentMediaURL?.standardizedFileURL.path == oldURL.standardizedFileURL.path {
             currentMediaURL = newURL
             updateWindowTitle(newURL.lastPathComponent)
         }
@@ -1877,6 +1922,45 @@ class PlayerWindowController: NSWindowController {
         refreshQueueDisplays()
         // Note: VLC continues playing from the already-open file descriptor;
         // the new path takes effect the next time playCurrentItem() is called.
+    }
+
+    func undoLastMarkerRename() {
+        guard let win = window, let step = markerRenameUndoState.step else { return }
+        // The step is used (or cleared on failure) from here on, so the toast goes.
+        hideUndoToast()
+
+        switch MarkerRenameUndoPlan.build(for: step) {
+        case .failure(.missingSource):
+            markerRenameUndoState.clear()
+            presentRenameAlert(title: "Cannot Rename",
+                               message: "The original file could not be found.",
+                               window: win)
+        case .failure(.destinationCollision(let filename)):
+            markerRenameUndoState.clear()
+            presentRenameAlert(title: "Cannot Rename",
+                               message: "A file named \"\(filename)\" already exists in this folder.",
+                               window: win)
+        case .success(let plan):
+            var completed: [PlannedMarkerRenameUndo] = []
+            do {
+                for rename in plan {
+                    try FileManager.default.moveItem(at: rename.sourceURL, to: rename.destinationURL)
+                    completed.append(rename)
+                }
+            } catch {
+                for rename in completed.reversed() {
+                    try? FileManager.default.moveItem(at: rename.destinationURL, to: rename.sourceURL)
+                }
+                markerRenameUndoState.clear()
+                presentRenameAlert(title: "Rename Failed", message: error.localizedDescription, window: win)
+                return
+            }
+
+            for rename in plan {
+                updateRenamedQueueReferences(from: rename.sourceURL, to: rename.destinationURL)
+            }
+            markerRenameUndoState.clear()
+        }
     }
 
     private func validatedRenameFilename(_ filename: String, originalURL: URL) -> String? {
@@ -2784,6 +2868,8 @@ class PlayerWindowController: NSWindowController {
         }
 
         let url = playbackSet[idx]
+        // A fresh attempt clears the earlier failure mark; a new failure sets it again.
+        if failedPlaybackPaths.remove(url.standardizedFileURL.path) != nil { refreshQueuePage() }
         PlayNextChainPolicy.onPlaybackStarted(
             currentSetIndex: idx,
             displayOrder: displayOrder,
@@ -3031,6 +3117,8 @@ class PlayerWindowController: NSWindowController {
 
         resetPlaybackCompletionSignals(reason: "playback-failure-\(source)")
         activePlaybackFailureAttempt = attempt
+        failedPlaybackPaths.insert(failedURL.standardizedFileURL.path)
+        refreshQueuePage()
         let filename = failedURL.lastPathComponent
         DebugConsoleController.log(level: .error,
                                    category: "playback",
@@ -3055,10 +3143,12 @@ class PlayerWindowController: NSWindowController {
               failedURL.lastPathComponent, advanced ? 1 : 0)
     }
 
-    /// Non-blocking, non-modal failure toast reusing the existing title-overlay
-    /// widget. Purely cosmetic: never gates, delays, or is required by advancement.
+    /// Non-blocking, non-modal failure message in the design system's failure
+    /// style, held for 3 s. Purely cosmetic: never gates, delays, or is required
+    /// by advancement.
     private func showPlaybackFailureOverlay(filename: String) {
-        showVideoTitleOverlay(title: "Could not play \u{201c}\(filename)\u{201d}", duration: 1.0)
+        failureMessageView.present(filename: filename)
+        positionFailureMessage()
     }
 
     private func cancelReplacementStart(reason: String, suppressLog: Bool = false) {
@@ -4070,7 +4160,7 @@ class PlayerWindowController: NSWindowController {
         transport.isHidden = false
         transport.setBackdropActive(true)
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
+            ctx.duration = DWBAppearance.shared.duration(0.15)
             transport.animator().alphaValue = 1.0
         }
     }
@@ -4081,7 +4171,7 @@ class PlayerWindowController: NSWindowController {
         }
         let gen = hudShowGeneration
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.3
+            ctx.duration = DWBAppearance.shared.duration(0.3)
             transport.animator().alphaValue = 0.0
         } completionHandler: { [weak self] in
             guard let self = self, self.hudShowGeneration == gen else { return }
@@ -4098,7 +4188,7 @@ class PlayerWindowController: NSWindowController {
         hideHUDTimer?.invalidate()
         hideHUDTimer = Timer.scheduledTimer(withTimeInterval: 2.7, repeats: false) { [weak self] _ in
             guard let self = self else { return }
-            if self.isFullscreen || self.autoHideTransportEnabled { self.hideHUD() }
+            if self.isFullscreen { self.hideHUD() }
         }
     }
 
@@ -4122,7 +4212,7 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("window", "titlebar: show")
         window?.titlebarAppearsTransparent = false
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
+            ctx.duration = DWBAppearance.shared.duration(0.15)
             tbv.animator().alphaValue = 1.0
         }
     }
@@ -4135,7 +4225,7 @@ class PlayerWindowController: NSWindowController {
         titlebarIsHidden = true
         DebugConsoleController.log("window", "titlebar: hide")
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.3
+            ctx.duration = DWBAppearance.shared.duration(0.3)
             tbv.animator().alphaValue = 0.0
         } completionHandler: { [weak self] in
             // Only apply transparent background once the fade is complete, to prevent
@@ -4191,7 +4281,7 @@ class PlayerWindowController: NSWindowController {
     override func mouseMoved(with event: NSEvent) {
         if transport.isUsingUnifiedBottomRail {
             transport.noteChromeActivity()
-        } else if isFullscreen || autoHideTransportEnabled {
+        } else if isFullscreen {
                 showHUD()
                 scheduleHide()
         }
@@ -4335,7 +4425,6 @@ extension PlayerWindowController: NSWindowDelegate {
         transport.setBackdropActive(true)
         transport.alphaValue = 1.0
         addMouseTracking()
-        if autoHideTransportEnabled { scheduleHide() }
         layoutPlayerViews()
 
         // Deferred authoritative pass: after the window system has fully settled,
@@ -4823,12 +4912,24 @@ extension PlayerWindowController: QueuePageViewDelegate {
             }
         }
 
+        let undoEntries = pendingRenames.compactMap { rename -> MarkerRenameUndoEntry? in
+            guard rename.pbIdx >= 0, rename.pbIdx < playbackSet.count else { return nil }
+            let originalURL = playbackSet[rename.pbIdx]
+            return MarkerRenameUndoEntry(
+                originalURL: originalURL,
+                renamedURL: originalURL.deletingLastPathComponent().appendingPathComponent(rename.newName)
+            )
+        }
+        guard undoEntries.count == pendingRenames.count else { return }
+
         if pendingRenames.count == 1 {
             // Single-file fast path: no confirmation required.
             let r = pendingRenames[0]
             DebugConsoleController.log("rename",
                 "\(tag): \(r.oldName) → \(r.newName) source=queuePage")
-            renameFile(at: r.pbIdx, to: r.newName)
+            if renameFile(at: r.pbIdx, to: r.newName) {
+                recordMarkerRename(entries: undoEntries)
+            }
         } else {
             // Multi-file: show confirmation before any filesystem mutation.
             let count = pendingRenames.count
@@ -4841,11 +4942,18 @@ extension PlayerWindowController: QueuePageViewDelegate {
             alert.addButton(withTitle: "Cancel")
             alert.beginSheetModal(for: win) { [weak self] response in
                 guard response == .alertFirstButtonReturn, let self = self else { return }
+                var allRenamesSucceeded = true
                 for r in pendingRenames {
                     guard r.pbIdx < self.playbackSet.count else { continue }
                     DebugConsoleController.log("rename",
                         "\(tag): \(r.oldName) → \(r.newName) source=queuePage confirmed")
-                    self.renameFile(at: r.pbIdx, to: r.newName)
+                    if !self.renameFile(at: r.pbIdx, to: r.newName) {
+                        allRenamesSucceeded = false
+                        break
+                    }
+                }
+                if allRenamesSucceeded {
+                    self.recordMarkerRename(entries: undoEntries)
                 }
             }
         }
@@ -5074,6 +5182,11 @@ extension PlayerWindowController: QueuePageViewDelegate {
     /// expectation that "remove all" means an intentional clean slate.
     func queuePageDidRequestRemoveAll(_ view: QueuePageView) {
         removeAllQueueItems(source: "queuePage")
+    }
+
+    /// Footer Undo: the same undo as Command-Z.
+    func queuePageDidRequestUndoMarkerRename(_ view: QueuePageView) {
+        undoLastMarkerRename()
     }
 
     func queuePage(_ view: QueuePageView, didReorderFromIndex from: Int, toIndex to: Int) {

@@ -82,10 +82,11 @@ enum ScrubberTrackGeometry {
     /// Keeps the compact visual thumb centered on the exact horizontal center
     /// AppKit uses for its tracked knob, while matching the custom rail's
     /// vertical center.
-    static func visibleKnobRect(trackRect: CGRect, knobRect: CGRect) -> CGRect {
+    static func visibleKnobRect(trackRect: CGRect,
+                                knobRect: CGRect,
+                                diameter: CGFloat = visibleKnobDiameter) -> CGRect {
         guard !trackRect.isEmpty else { return .zero }
 
-        let diameter = visibleKnobDiameter
         return CGRect(
             x: knobRect.midX - diameter / 2,
             y: trackRect.midY - diameter / 2,

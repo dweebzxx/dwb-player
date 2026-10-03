@@ -1,59 +1,5 @@
 import Cocoa
 
-enum PlayerBrandColors {
-    // Periwinkle (#4C62A8): brand accent for bookmark and active states.
-    static let periwinkle = NSColor(calibratedRed: 76.0 / 255.0,
-                                    green: 98.0 / 255.0,
-                                    blue: 168.0 / 255.0,
-                                    alpha: 1.0)
-
-    // Periwinkle 300 (#9AAAD8): light keyline/focus stop for dark surfaces.
-    static let periwinkleLight = NSColor(calibratedRed: 154.0 / 255.0,
-                                         green: 170.0 / 255.0,
-                                         blue: 216.0 / 255.0,
-                                         alpha: 1.0)
-
-    // Dark Ochre 700 (#A87820): reserved caution/attention status color.
-    static let darkOchre = NSColor(calibratedRed: 168.0 / 255.0,
-                                   green: 120.0 / 255.0,
-                                   blue: 32.0 / 255.0,
-                                   alpha: 1.0)
-
-    // Dark Ochre 300 (#E0C060): legible caution foreground on dark surfaces.
-    static let darkOchreLight = NSColor(calibratedRed: 224.0 / 255.0,
-                                        green: 192.0 / 255.0,
-                                        blue: 96.0 / 255.0,
-                                        alpha: 1.0)
-
-    // Crimson (#B03828): reserved brand status color for destructive actions.
-    static let crimson = NSColor(calibratedRed: 176.0 / 255.0,
-                                 green: 56.0 / 255.0,
-                                 blue: 40.0 / 255.0,
-                                 alpha: 1.0)
-
-    // Crimson 300 (#E09888): legible error foreground on dark surfaces.
-    static let crimsonLight = NSColor(calibratedRed: 224.0 / 255.0,
-                                      green: 152.0 / 255.0,
-                                      blue: 136.0 / 255.0,
-                                      alpha: 1.0)
-}
-
-enum PrefixBrandColors {
-    // Brand color system categorical mapping for dark graphite UI:
-    // Primary custom prefix = Dark Teal 500 (#488FA0).
-    static let primaryCustomPrefixColor = NSColor(calibratedRed: 72.0 / 255.0,
-                                                  green: 143.0 / 255.0,
-                                                  blue: 160.0 / 255.0,
-                                                  alpha: 1.0)
-
-    // Secondary custom prefix = Burnt Orange 300 (#D4906A). This stop is more
-    // legible than Burnt Orange 500 on the app's dark graphite surfaces.
-    static let secondaryCustomPrefixColor = NSColor(calibratedRed: 212.0 / 255.0,
-                                                    green: 144.0 / 255.0,
-                                                    blue: 106.0 / 255.0,
-                                                    alpha: 1.0)
-}
-
 /// Compact keyboard-shortcut tag rendered beside a control (e.g. "N" next to the
 /// custom prefix rename buttons). Decorative only: it never intercepts clicks and is hidden
 /// from accessibility — the shortcut is announced through the control's own
@@ -74,12 +20,12 @@ final class ShortcutKeyBadge: NSTextField {
         usesSingleLineMode = true
         lineBreakMode = .byClipping
         font = .monospacedSystemFont(ofSize: 8, weight: .semibold)
-        textColor = NSColor.white.withAlphaComponent(0.60)
+        textColor = DWBAppearance.shared.textSecondary
         wantsLayer = true
-        layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
+        layer?.backgroundColor = DWBColor.canvas.cgColor
+        layer?.borderColor = DWBColor.borderStrong.cgColor
         layer?.borderWidth = 1.0
-        layer?.cornerRadius = 3
+        layer?.cornerRadius = DWBMetrics.radiusTag
         setAccessibilityElement(false)
     }
 
@@ -88,8 +34,23 @@ final class ShortcutKeyBadge: NSTextField {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+/// Source-over composite of two colors, used where a hover or pressed overlay
+/// sits on top of a toggled tint.
+private func composite(_ top: NSColor, over bottom: NSColor) -> NSColor {
+    guard let t = top.usingColorSpace(.sRGB), let b = bottom.usingColorSpace(.sRGB) else { return top }
+    let alpha = t.alphaComponent + b.alphaComponent * (1 - t.alphaComponent)
+    guard alpha > 0 else { return .clear }
+    func channel(_ tc: CGFloat, _ bc: CGFloat) -> CGFloat {
+        (tc * t.alphaComponent + bc * b.alphaComponent * (1 - t.alphaComponent)) / alpha
+    }
+    return NSColor(srgbRed: channel(t.redComponent, b.redComponent),
+                   green: channel(t.greenComponent, b.greenComponent),
+                   blue: channel(t.blueComponent, b.blueComponent),
+                   alpha: alpha)
+}
+
 final class RailButton: NSButton {
-    enum Style {
+    enum Style: Equatable {
         case normal
         case emphasized
         case utility
@@ -100,7 +61,10 @@ final class RailButton: NSButton {
     }
 
     var railStyle: Style = .normal {
-        didSet { updateAppearance() }
+        didSet {
+            guard railStyle != oldValue else { return }
+            updateAppearance()
+        }
     }
 
     var isToggled: Bool = false {
@@ -115,6 +79,7 @@ final class RailButton: NSButton {
     private var isHovering = false
     private var isPressing = false
     private var tracking: NSTrackingArea?
+    private let focusRingLayer = CAShapeLayer()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -123,6 +88,10 @@ final class RailButton: NSButton {
 
     required init?(coder: NSCoder) {
         fatalError("programmatic only")
+    }
+
+    deinit {
+        PlayerAccessibilityEnvironment.stopObserving(self)
     }
 
     override func updateTrackingAreas() {
@@ -199,6 +168,11 @@ final class RailButton: NSButton {
         NSBezierPath(ovalIn: focusRingMaskBounds).fill()
     }
 
+    override func layout() {
+        super.layout()
+        updateFocusRingPath()
+    }
+
     func configureSymbol(_ symbolName: String,
                          pointSize: CGFloat,
                          accessibilityLabel: String,
@@ -223,83 +197,106 @@ final class RailButton: NSButton {
         focusRingType = .none
         imageScaling = .scaleProportionallyDown
         wantsLayer = true
-        layer?.borderWidth = 1
-        contentTintColor = NSColor.white.withAlphaComponent(0.88)
+        layer?.borderWidth = 0
+        focusRingLayer.fillColor = nil
+        focusRingLayer.isHidden = true
+        layer?.addSublayer(focusRingLayer)
+        contentTintColor = DWBColor.textPrimary
+        PlayerAccessibilityEnvironment.observeChanges(self, selector: #selector(accessibilityOptionsChanged))
         updateAppearance()
     }
 
-    private func updateAppearance() {
-        let enabledAlpha: CGFloat = isEnabled ? 1.0 : 0.32
-        alphaValue = enabledAlpha
+    @objc private func accessibilityOptionsChanged() {
+        updateAppearance()
+    }
 
-        let tint: NSColor
+    /// Glyph and title color for the current style when the button is not toggled.
+    private var restTint: NSColor {
         switch railStyle {
-        case .normal:
-            tint = .white
-        case .emphasized:
-            tint = .white
-        case .utility:
-            tint = PlayerBrandColors.periwinkleLight
-        case .prefixPrimary:
-            tint = PrefixBrandColors.primaryCustomPrefixColor
-        case .prefixSecondary:
-            tint = PrefixBrandColors.secondaryCustomPrefixColor
-        case .bookmark:
-            tint = PlayerBrandColors.periwinkleLight
-        case .warning:
-            tint = PlayerBrandColors.darkOchreLight
+        case .normal, .emphasized, .utility: return DWBColor.textPrimary
+        case .prefixPrimary: return PlayerTheme.current.markerPrimary
+        case .prefixSecondary: return PlayerTheme.current.markerSecondary
+        case .bookmark: return PlayerTheme.current.accentText
+        case .warning: return DWBColor.cautionText
         }
+    }
 
-        let keyboardFocused = window?.firstResponder === self
-        let increasedContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-        let activeColor: NSColor = {
-            switch railStyle {
-            case .prefixPrimary: return PrefixBrandColors.primaryCustomPrefixColor
-            case .prefixSecondary: return PrefixBrandColors.secondaryCustomPrefixColor
-            case .warning: return PlayerBrandColors.darkOchre
-            default: return PlayerBrandColors.periwinkle
+    /// Glyph color when toggled. Styled buttons keep their own tone; a plain
+    /// button takes the accent.
+    private var toggledTint: NSColor {
+        switch railStyle {
+        case .normal, .emphasized, .utility: return PlayerTheme.current.accentText
+        default: return restTint
+        }
+    }
+
+    /// Ring and tint base for the toggled state.
+    private var toggledFill: NSColor {
+        switch railStyle {
+        case .prefixPrimary: return DWBColor.orangeFillDark
+        case .prefixSecondary: return DWBColor.tealFillDark
+        case .warning: return DWBColor.cautionFill
+        default: return PlayerTheme.current.accentFill
+        }
+    }
+
+    private func updateAppearance() {
+        alphaValue = isEnabled ? 1.0 : DWBMetrics.disabledAlpha
+
+        let increasedContrast = PlayerAccessibilityEnvironment.increaseContrast
+        let keyboardFocused = window?.firstResponder === self && isEnabled
+        let interactive = isEnabled
+        let toggled = isToggled && isEnabled
+
+        var fill = NSColor.clear
+        var ring: NSColor?
+
+        if toggled {
+            fill = toggledFill.withAlphaComponent(0.28)
+            ring = toggledFill
+            if isPressing && interactive {
+                fill = composite(DWBColor.overlayPressed, over: fill)
+            } else if isHovering && interactive {
+                fill = composite(DWBColor.overlayHover, over: fill)
             }
-        }()
-
-        var fillColor = NSColor.clear
-        var borderColor = NSColor.clear
-        if railStyle == .emphasized && isEnabled {
-            fillColor = NSColor.white.withAlphaComponent(0.15)
-            borderColor = NSColor.white.withAlphaComponent(0.18)
-        }
-        if isToggled && isEnabled {
-            fillColor = activeColor.withAlphaComponent(isHovering ? 0.28 : 0.20)
-            borderColor = activeColor.withAlphaComponent(increasedContrast ? 0.90 : 0.56)
-        }
-        if isHovering && isEnabled {
-            fillColor = isToggled
-                ? activeColor.withAlphaComponent(0.28)
-                : NSColor.white.withAlphaComponent(railStyle == .emphasized ? 0.24 : 0.13)
-            borderColor = isToggled
-                ? activeColor.withAlphaComponent(0.68)
-                : NSColor.white.withAlphaComponent(increasedContrast ? 0.48 : 0.22)
-        }
-        if isPressing && isEnabled {
-            fillColor = isToggled
-                ? activeColor.withAlphaComponent(0.36)
-                : NSColor.white.withAlphaComponent(0.24)
-            borderColor = isToggled
-                ? activeColor.withAlphaComponent(0.82)
-                : NSColor.white.withAlphaComponent(0.34)
-        }
-        if keyboardFocused && isEnabled {
-            borderColor = PlayerBrandColors.periwinkleLight.withAlphaComponent(increasedContrast ? 1.0 : 0.88)
-            if fillColor.alphaComponent == 0 {
-                fillColor = PlayerBrandColors.periwinkle.withAlphaComponent(0.14)
+        } else {
+            if railStyle == .emphasized {
+                fill = DWBColor.overlaySelected
+                if isPressing && interactive {
+                    fill = composite(DWBColor.overlayPressed, over: fill)
+                } else if isHovering && interactive {
+                    fill = DWBColor.overlayPressed
+                }
+            } else if isPressing && interactive {
+                fill = DWBColor.overlayPressed
+            } else if isHovering && interactive {
+                fill = DWBColor.overlayHover
+            }
+            if increasedContrast {
+                ring = DWBColor.borderStrong
             }
         }
 
-        layer?.backgroundColor = fillColor.cgColor
-        layer?.borderColor = borderColor.cgColor
-        layer?.borderWidth = keyboardFocused && increasedContrast ? 2 : 1
-        let effectiveTint = tint.withAlphaComponent(isEnabled ? (isToggled ? 1.0 : 0.84) : 0.48)
-        contentTintColor = effectiveTint
-        applyTitleTint(effectiveTint)
+        layer?.backgroundColor = fill.cgColor
+        layer?.borderColor = ring?.cgColor
+        layer?.borderWidth = ring == nil ? 0 : 1
+
+        let tint = toggled ? toggledTint : restTint
+        contentTintColor = tint
+        applyTitleTint(tint)
+
+        focusRingLayer.isHidden = !keyboardFocused
+        focusRingLayer.strokeColor = PlayerTheme.current.focusRing(increaseContrast: increasedContrast).cgColor
+        focusRingLayer.lineWidth = increasedContrast ? DWBMetrics.focusWidthIC : DWBMetrics.focusWidth
+        updateFocusRingPath()
+    }
+
+    /// A ring of `focusWidth` whose inner edge sits 2 pt outside the button.
+    private func updateFocusRingPath() {
+        let width = focusRingLayer.lineWidth
+        let outset = 2 + width / 2
+        focusRingLayer.frame = bounds
+        focusRingLayer.path = CGPath(ellipseIn: bounds.insetBy(dx: -outset, dy: -outset), transform: nil)
     }
 
     private func applyTitleTint(_ tint: NSColor) {
@@ -310,7 +307,7 @@ final class RailButton: NSButton {
             return
         }
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: font ?? NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+            .font: font ?? NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold),
             .foregroundColor: tint
         ]
         attributedTitle = NSAttributedString(string: currentTitle, attributes: attributes)

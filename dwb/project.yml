@@ -53,6 +53,8 @@ targets:
     sources:
       - path: dwbTests
       - path: dwb/Player/MediaFileSupportCore.swift
+      - path: dwb/Player/MarkerRenameUndoPlan.swift
+      - path: dwb/Player/PlayerOverlayModels.swift
       - path: dwb/Player/PlaybackCompletionPolicy.swift
       - path: dwb/Player/QueueDisplayProjection.swift
       - path: dwb/Player/MediaIntakeRecovery.swift
@@ -60,6 +62,12 @@ targets:
       - path: dwb/App/DebugLogSanitizer.swift
       - path: dwb/App/BookmarkStore.swift
       - path: dwb/App/SettingsDefaultsRegistry.swift
+      - path: dwb/App/DWBTheme.swift
+      - path: dwb/App/DWBAppearance.swift
+      - path: dwb/App/PlayerTheme.swift
+      - path: dwb/Player/QueuePanelModels.swift
+      - path: dwb/App/ShortcutsModel.swift
+      - path: dwb/App/SettingsPagesModel.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: "YES"

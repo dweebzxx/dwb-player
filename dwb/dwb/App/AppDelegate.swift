@@ -11,6 +11,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
     private var hasReceivedOpenEventDuringLaunch = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+        DWBAppearance.shared.start()
         SettingsWindowController.registerDefaults()
         _ = DebugConsoleController.shared   // eagerly init so it observes settings from launch
         buildMainMenu()
@@ -277,6 +279,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         frontPlayerWindowController?.showRenameSheet()
     }
 
+    @objc func undoMarkerRename(_ sender: Any) {
+        if let textEditor = activeTextEditor() {
+            textEditor.undoManager?.undo()
+            return
+        }
+        frontPlayerWindowController?.undoLastMarkerRename()
+    }
+
     @objc func removeCurrentQueueItem(_ sender: Any) {
         frontPlayerWindowController?.removeCurrentQueueItem()
     }
@@ -384,6 +394,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         }
 
         switch menuItem.tag {
+        case 50:
+            let canUndoMarkerRename = controller?.canUndoMarkerRename == true
+            menuItem.title = canUndoMarkerRename ? "Undo Marker Rename" : "Undo"
+            return canUndoMarkerRename || (activeTextEditor()?.undoManager?.canUndo == true)
         case 1:
             menuItem.state = frontPlayerWindowController?.scaleMode == .fit     ? .on : .off
         case 2:
@@ -415,6 +429,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
     private var frontPlayerWindowController: PlayerWindowController? {
         return usablePlayerWindowController()
+    }
+
+    private func activeTextEditor() -> NSTextView? {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView,
+              editor.isEditable else { return nil }
+        return editor
     }
 
     private func observeSettings() {
@@ -462,6 +482,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         appMenu.addItem(withTitle: "Quit dwb player",
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
+
+        // ── Edit menu ───────────────────────────────────────────────────────
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+
+        let undoItem = NSMenuItem(title: "Undo",
+                                  action: #selector(undoMarkerRename(_:)),
+                                  keyEquivalent: "z")
+        undoItem.keyEquivalentModifierMask = .command
+        undoItem.target = self
+        undoItem.tag = 50
+        editMenu.addItem(undoItem)
 
         // ── File menu ───────────────────────────────────────────────────────
         let fileItem = NSMenuItem()

@@ -61,7 +61,7 @@ final class TransportControlsView: NSView {
     private var railVisibilityGeneration = 0
     private lazy var railAutohideController = IdleAutohideController(
         threshold: UserDefaults.standard.double(forKey: SettingsWindowController.chromeAutohideThresholdKey),
-        reduceMotion: UserDefaults.standard.bool(forKey: SettingsWindowController.chromeReducedMotionKey),
+        reduceMotion: DWBAppearance.shared.reduceMotion,
         visibilityHoldProvider: { [weak self] in
             guard let self = self else { return false }
             if self.isScrubbing { return true }
@@ -75,7 +75,7 @@ final class TransportControlsView: NSView {
     )
 
     var isUsingUnifiedBottomRail: Bool { useUnifiedBottomRail }
-    var unifiedBottomRailHeight: CGFloat { isFullscreenStyle ? 80 : 84 }
+    var unifiedBottomRailHeight: CGFloat { DWBMetrics.railHeight }
 
     // MARK: - Image mode state (set by PlayerWindowController for slideshow items)
     var isImageMode: Bool = false {
@@ -134,7 +134,7 @@ final class TransportControlsView: NSView {
         addSubview(effectView)
 
         separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        separator.layer?.backgroundColor = DWBColor.hairline.cgColor
         separator.isHidden = true
         addSubview(separator)
 
@@ -187,7 +187,7 @@ final class TransportControlsView: NSView {
         // Time labels
         for label in [elapsedLabel, remainingLabel] {
             label.font            = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-            label.textColor       = NSColor.white.withAlphaComponent(0.80)
+            label.textColor       = DWBColor.textSecondary
             label.drawsBackground = false
             addSubview(label)
         }
@@ -247,10 +247,10 @@ final class TransportControlsView: NSView {
         dPrefixVideoPageButton.target       = self
         dPrefixVideoPageButton.action       = #selector(dPrefixVideoPageTapped)
         dPrefixVideoPageButton.wantsLayer   = true
-        dPrefixVideoPageButton.layer?.backgroundColor = PrefixBrandColors.primaryCustomPrefixColor.withAlphaComponent(0.20).cgColor
+        dPrefixVideoPageButton.layer?.backgroundColor = DWBColor.orangeFillDark.withAlphaComponent(0.18).cgColor
         dPrefixVideoPageButton.layer?.borderWidth     = 1
-        dPrefixVideoPageButton.layer?.borderColor     = PrefixBrandColors.primaryCustomPrefixColor.withAlphaComponent(0.30).cgColor
-        dPrefixVideoPageButton.contentTintColor       = PrefixBrandColors.primaryCustomPrefixColor.withAlphaComponent(0.92)
+        dPrefixVideoPageButton.layer?.borderColor     = DWBColor.orangeFillDark.cgColor
+        dPrefixVideoPageButton.contentTintColor       = PlayerTheme.current.markerPrimary
         dPrefixVideoPageButton.toolTip = "Rename: apply custom prefix (N)"
         dPrefixVideoPageButton.setAccessibilityLabel("Apply custom prefix to current file")
         dPrefixVideoPageButton.title = "x_"
@@ -261,7 +261,6 @@ final class TransportControlsView: NSView {
         // Apply current rail visibility. Legacy pod controls stay hidden in the shipped UI.
         applyVisibilitySettings()
         applySkipDurationSettings()
-        setVideoPageDButtonVisible(SettingsWindowController.isCustomPrefixVideoPageEnabled())
         refreshUnifiedBottomRailMode()
 
         // Live-update when Settings changes playback control chrome.
@@ -277,22 +276,6 @@ final class TransportControlsView: NSView {
             name: .skipDurationChanged,
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleVideoPageDButtonSettingChange),
-            name: .videoPageCustomPrefixButtonSettingChanged,
-            object: nil
-        )
-    }
-
-    func setVideoPageDButtonVisible(_ visible: Bool) {
-        dPrefixVideoPageButton.isHidden = !visible
-        bottomRail.applyVisibilitySettings()
-        needsLayout = true
-    }
-
-    @objc private func handleVideoPageDButtonSettingChange() {
-        setVideoPageDButtonVisible(SettingsWindowController.isCustomPrefixVideoPageEnabled())
     }
 
     @objc private func dPrefixVideoPageTapped() {
@@ -305,12 +288,6 @@ final class TransportControlsView: NSView {
     /// Call this on init and whenever transportVisibilityChanged is posted.
     func applyVisibilitySettings() {
         refreshUnifiedBottomRailMode()
-        if !useUnifiedBottomRail {
-            stopButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.stop)
-            volumeButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.volume)
-            shuffleButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.shuffle)
-            repeatButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.repeatOne)
-        }
         bottomRail.applyVisibilitySettings()
         invalidateCachedDisplayState()
         needsLayout = true
@@ -363,10 +340,10 @@ final class TransportControlsView: NSView {
         button.target       = self
         button.action       = action
         button.wantsLayer   = true
-        button.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.13).cgColor
+        button.layer?.backgroundColor = DWBColor.overlayHover.cgColor
         button.layer?.borderWidth     = 1
-        button.layer?.borderColor     = NSColor.white.withAlphaComponent(0.12).cgColor
-        button.contentTintColor       = NSColor.white.withAlphaComponent(0.90)
+        button.layer?.borderColor     = DWBColor.border.cgColor
+        button.contentTintColor       = DWBColor.textPrimary
         applySymbol(button, symbol, pointSize: size)
         addSubview(button)
     }
@@ -424,7 +401,7 @@ final class TransportControlsView: NSView {
         configureSubviewVisibilityForCurrentRailMode()
         if useUnifiedBottomRail {
             railAutohideController.threshold = UserDefaults.standard.double(forKey: SettingsWindowController.chromeAutohideThresholdKey)
-            railAutohideController.reduceMotion = UserDefaults.standard.bool(forKey: SettingsWindowController.chromeReducedMotionKey)
+            railAutohideController.reduceMotion = DWBAppearance.shared.reduceMotion
             if !railAutohideStarted {
                 railAutohideController.start(visible: true)
                 railAutohideStarted = true
@@ -444,11 +421,11 @@ final class TransportControlsView: NSView {
         legacyViews.forEach { $0.isHidden = legacyHidden }
         if !legacyHidden {
             separator.isHidden = true
-            dPrefixVideoPageButton.isHidden = !SettingsWindowController.isCustomPrefixVideoPageEnabled()
-            stopButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.stop)
-            volumeButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.volume)
-            shuffleButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.shuffle)
-            repeatButton.isHidden = !SettingsWindowController.isOptionalTransportControlVisible(.repeatOne)
+            dPrefixVideoPageButton.isHidden = true
+            stopButton.isHidden = true
+            volumeButton.isHidden = true
+            shuffleButton.isHidden = true
+            repeatButton.isHidden = true
         }
         if useUnifiedBottomRail {
             if !railAutohideStarted {
@@ -464,21 +441,24 @@ final class TransportControlsView: NSView {
         guard useUnifiedBottomRail else { return }
         railVisibilityGeneration += 1
         let generation = railVisibilityGeneration
+        // 250 ms fade; instant under Reduce Motion.
+        let duration = DWBMotion.duration(DWBMotion.rail, reduceMotion: railAutohideController.reduceMotion)
+        let fades = animated && duration > 0
         if visible {
             bottomRail.isHidden = false
             bottomRail.setAccessibilityVisible(true)
-            if animated {
+            if fades {
                 NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = railAutohideController.reduceMotion ? 0.05 : 0.15
+                    ctx.duration = duration
                     bottomRail.animator().alphaValue = 1.0
                 }
             } else {
                 bottomRail.alphaValue = 1.0
             }
-        } else if animated {
+        } else if fades {
             bottomRail.setAccessibilityVisible(false)
             NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = railAutohideController.reduceMotion ? 0.05 : 0.22
+                ctx.duration = duration
                 bottomRail.animator().alphaValue = 0.0
             } completionHandler: { [weak self] in
                 guard let self = self, generation == self.railVisibilityGeneration else { return }
@@ -543,10 +523,9 @@ final class TransportControlsView: NSView {
             button.layer?.cornerRadius = size / 2
             let fillAlpha: CGFloat   = fs ? (emphasized ? 0.15 : 0.08) : (emphasized ? 0.26 : 0.13)
             let borderAlpha: CGFloat = fs ? (emphasized ? 0.12 : 0.08) : (emphasized ? 0.16 : 0.12)
-            button.layer?.backgroundColor = NSColor.white.withAlphaComponent(fillAlpha).cgColor
-            button.layer?.borderColor     = NSColor.white.withAlphaComponent(borderAlpha).cgColor
-            button.contentTintColor       = NSColor.white.withAlphaComponent(
-                fs ? (emphasized ? 0.88 : 0.78) : 0.90)
+            button.layer?.backgroundColor = (emphasized ? DWBColor.overlaySelected : DWBColor.overlayHover).cgColor
+            button.layer?.borderColor     = (borderAlpha > 0.12 ? DWBColor.borderStrong : DWBColor.border).cgColor
+            button.contentTintColor       = DWBColor.textPrimary
         }
 
         // Bottom-left Queue Page and bottom-right fullscreen — both scale with the pod.
@@ -583,7 +562,7 @@ final class TransportControlsView: NSView {
         bookmarkButton.isEnabled = hasItem
         bookmarkButton.alphaValue = isBookmarked ? 1.0 : (hasItem ? 0.70 : 0.35)
         applySymbol(bookmarkButton, isBookmarked ? "bookmark.fill" : "bookmark", pointSize: 11)
-        bookmarkButton.contentTintColor = (isBookmarked ? PlayerBrandColors.periwinkle : .white)
+        bookmarkButton.contentTintColor = (isBookmarked ? PlayerTheme.current.accentText : DWBColor.textPrimary)
             .withAlphaComponent(isBookmarked ? 1.0 : 0.90)
         bookmarkButton.setAccessibilityValue(isBookmarked ? "bookmarked" : "not bookmarked")
 
@@ -624,7 +603,7 @@ final class TransportControlsView: NSView {
         effectView.frame = podFrame
         effectView.layer?.cornerRadius = podH / 2
         effectView.layer?.borderWidth  = fs ? 0.8 : 1.0
-        effectView.layer?.borderColor  = NSColor.white.withAlphaComponent(fs ? 0.10 : 0.14).cgColor
+        effectView.layer?.borderColor  = DWBColor.hairline.cgColor
         var x = podX + podPadX
         for (button, size, emphasized) in visibleCenter {
             let y = podYActual + (podH - size) / 2
@@ -638,7 +617,7 @@ final class TransportControlsView: NSView {
         scrubber.frame = NSRect(x: 0, y: 0, width: w, height: sH)
 
         elapsedLabel.font = .monospacedDigitSystemFont(ofSize: fs ? 9.5 : 10.5, weight: .regular)
-        elapsedLabel.textColor = NSColor.white.withAlphaComponent(fs ? 0.72 : 0.82)
+        elapsedLabel.textColor = DWBColor.textSecondary
         let labelW = min(CGFloat(220), max(120, w - 2 * edgePad))
         elapsedLabel.frame = NSRect(x: (w - labelW) / 2,
                                     y: sH + 2,
@@ -809,7 +788,7 @@ final class TransportControlsView: NSView {
         bookmarkButton.isEnabled = hasItem
         bookmarkButton.alphaValue = isBookmarked ? 1.0 : (hasItem ? 0.70 : 0.35)
         applySymbol(bookmarkButton, isBookmarked ? "bookmark.fill" : "bookmark", pointSize: 11)
-        bookmarkButton.contentTintColor = (isBookmarked ? PlayerBrandColors.periwinkle : .white)
+        bookmarkButton.contentTintColor = (isBookmarked ? PlayerTheme.current.accentText : DWBColor.textPrimary)
             .withAlphaComponent(isBookmarked ? 1.0 : 0.90)
         bookmarkButton.setAccessibilityValue(isBookmarked ? "bookmarked" : "not bookmarked")
     }
@@ -959,6 +938,18 @@ final class ScrubberSlider: NSSlider {
     var scrubDidBegin: (() -> Void)?
     var scrubDidEnd:   (() -> Void)?
 
+    /// Optional preview range and segment ticks, as 0...1 positions. The player
+    /// has no source for either today, so both stay empty.
+    var previewRange: ClosedRange<Double>? { didSet { needsDisplay = true } }
+    var tickPositions: [Double] = [] { didSet { needsDisplay = true } }
+
+    /// True while the pointer is over the scrubber or the user is dragging it;
+    /// the rail scrubber cell draws the larger knob for it.
+    private(set) var isEmphasized = false
+    private var isPointerInside = false { didSet { refreshEmphasis() } }
+    private var isDraggingKnob = false { didSet { refreshEmphasis() } }
+    private var hoverArea: NSTrackingArea?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         // Replace the default cell with the knobless variant before any property
@@ -968,9 +959,37 @@ final class ScrubberSlider: NSSlider {
     }
     required init?(coder: NSCoder) { fatalError("programmatic only") }
 
+    private func refreshEmphasis() {
+        let emphasized = isPointerInside || isDraggingKnob
+        guard emphasized != isEmphasized else { return }
+        isEmphasized = emphasized
+        needsDisplay = true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self,
+                                  userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isPointerInside = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isPointerInside = false
+    }
+
     override func mouseDown(with event: NSEvent) {
         scrubDidBegin?()
+        isDraggingKnob = true
         super.mouseDown(with: event)   // tracking loop — returns only on mouse-up
+        isDraggingKnob = false
         scrubDidEnd?()
     }
 
@@ -1006,7 +1025,7 @@ private final class KnoblessSliderCell: NSSliderCell {
                                  width: rect.width,
                                  height: h)
         // Background track
-        NSColor.white.withAlphaComponent(0.15).setFill()
+        DWBColor.track.setFill()
         NSBezierPath(roundedRect: barRect, xRadius: 1, yRadius: 1).fill()
 
         // Progress fill — tinted portion from 0 to current position
@@ -1016,7 +1035,7 @@ private final class KnoblessSliderCell: NSSliderCell {
             let filledW = max(0, barRect.width * frac)
             let filled  = NSRect(x: barRect.minX, y: barRect.minY,
                                  width: filledW,  height: barRect.height)
-            NSColor.white.withAlphaComponent(0.72).setFill()
+            PlayerTheme.current.accentText.setFill()
             NSBezierPath(roundedRect: filled, xRadius: 1, yRadius: 1).fill()
         }
     }

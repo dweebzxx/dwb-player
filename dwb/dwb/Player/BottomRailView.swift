@@ -9,6 +9,7 @@ final class BottomRailView: NSView {
     var scrubDidEnd: (() -> Void)?
 
     private let veil = NSView()
+    private let hairline = NSView()
     private let queueButton = RailButton()
     private let dPrefixButton = RailButton()
     private let secondaryPrefixButton = RailButton()
@@ -84,6 +85,7 @@ final class BottomRailView: NSView {
             name: .customPrefixValueChanged,
             object: nil
         )
+        PlayerAccessibilityEnvironment.observeChanges(self, selector: #selector(accessibilityOptionsChanged))
     }
 
     required init?(coder: NSCoder) {
@@ -92,6 +94,7 @@ final class BottomRailView: NSView {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        PlayerAccessibilityEnvironment.stopObserving(self)
     }
 
     override func updateTrackingAreas() {
@@ -115,6 +118,25 @@ final class BottomRailView: NSView {
     override func mouseExited(with event: NSEvent) {
         isPointerInside = false
         interactionStateDidChange?()
+    }
+
+    @objc private func accessibilityOptionsChanged() {
+        applyRailChrome()
+        applyTimeLabelColor()
+        scrubber.needsDisplay = true
+    }
+
+    /// Rail backing and top hairline; the backing becomes opaque under Increase Contrast.
+    private func applyRailChrome() {
+        let increased = PlayerAccessibilityEnvironment.increaseContrast
+        veil.layer?.backgroundColor = OverlayBacking.resolved(DWBColor.backingChrome, increaseContrast: increased).cgColor
+        hairline.layer?.backgroundColor = (increased ? DWBColor.borderStrong : DWBColor.hairline).cgColor
+    }
+
+    private func applyTimeLabelColor() {
+        let color = PlayerAccessibilityEnvironment.increaseContrast ? DWBColor.textPrimary : DWBColor.textSecondary
+        elapsedLabel.textColor = color
+        remainingLabel.textColor = color
     }
 
     @objc private func handleBottomRailButtonVisibilityChanged() {
@@ -264,6 +286,8 @@ final class BottomRailView: NSView {
                                              help: "Mute / Unmute")
             }
             volumeButton.setAccessibilityValue(audio.volume == 0 ? "muted" : "unmuted")
+            // Above 100% the button takes the caution color (a level warning).
+            volumeButton.railStyle = audio.volume > VolumePolicy.normalVolume ? .warning : .normal
         }
 
         rewindButton.isEnabled = hasMedia
@@ -312,35 +336,28 @@ final class BottomRailView: NSView {
     override func layout() {
         super.layout()
         let w = bounds.width
-        let railH: CGFloat = isFullscreenStyle ? 80 : 84
-        let scrubH: CGFloat = 14
-        let sidePad: CGFloat = w < 520 ? 12 : (isFullscreenStyle ? 16 : 20)
-        let buttonSize: CGFloat = w < 440 ? 28 : 30
-        let playSize: CGFloat = w < 440 ? 38 : 40
+        let railH = DWBMetrics.railHeight
+        let sidePad = RailMetrics.horizontalPadding
+        let buttonSize = DWBMetrics.railButton
+        let playSize = DWBMetrics.railButtonPrimary
         let gap: CGFloat = w < 520 ? 6 : 8
 
-        // Scrubber pinned to the very top edge of the rail; it bleeds off both window sides.
-        let scrubY: CGFloat = railH - scrubH
-        // Time labels float directly under the scrubber, centered above the play/pause button.
-        let timeLabelH: CGFloat = 14
-        let timeLabelGap: CGFloat = 2
-        let timeLabelY: CGFloat = max(0, scrubY - timeLabelGap - timeLabelH)
-        // Transport buttons vertically centered in the area beneath the time label row.
-        let buttonRowAreaH: CGFloat = timeLabelY
-        let rowY: CGFloat = max(0, (buttonRowAreaH - buttonSize) / 2)
-        let playY: CGFloat = max(0, (buttonRowAreaH - playSize) / 2)
+        // Buttons are centered in the 40 pt row beneath the scrubber.
+        let rowCenterY = RailMetrics.buttonRowCenterY
+        let rowY: CGFloat = rowCenterY - buttonSize / 2
+        let playY: CGFloat = rowCenterY - playSize / 2
 
-        // Veil background: top edge = scrubber bar bottom so the 3pt scrubber bar
-        // visually IS the top edge of the shaded area. The scrubber frame extends
-        // 11pt above the veil for hit-testing, but no shaded strip is visible above
-        // the scrubber bar.
-        let barThickness: CGFloat = 3
-        let veilTopY = scrubY + scrubH - barThickness  // bottom of the visible 3pt bar
-        veil.frame = NSRect(x: 0, y: 0, width: w, height: veilTopY)
+        veil.frame = NSRect(x: 0, y: 0, width: w, height: railH)
         veil.layer?.cornerRadius = 0
         veil.layer?.maskedCorners = []
-        veil.layer?.backgroundColor = NSColor.black.withAlphaComponent(isFullscreenStyle ? 0.22 : 0.36).cgColor
-        scrubber.frame = NSRect(x: 0, y: scrubY, width: w, height: scrubH)
+        applyRailChrome()
+        hairline.frame = NSRect(x: 0, y: railH - RailMetrics.hairlineHeight, width: w, height: RailMetrics.hairlineHeight)
+
+        // The scrubber sits inside the rail's horizontal padding, below the hairline.
+        scrubber.frame = NSRect(x: sidePad,
+                                y: RailMetrics.scrubberMinY,
+                                width: max(0, w - sidePad * 2),
+                                height: RailMetrics.scrubberHeight)
 
         applyResponsiveVisibility(width: w)
 
@@ -374,7 +391,6 @@ final class BottomRailView: NSView {
             place(button, x: centerX, y: size == playSize ? playY : rowY, size: size)
             centerX += size + gap
         }
-        let centerGroupCenterX = centerGroupLeft + centerWidth / 2
 
         // Right cluster: Fullscreen, More, Volume, Replay, Shuffle (laid out right-to-left)
         var rightX = w - sidePad - buttonSize
@@ -383,11 +399,19 @@ final class BottomRailView: NSView {
             rightX -= buttonSize + gap
         }
 
-        // Time label centered with the central transport group, directly under the scrubber.
-        let timeLabelW: CGFloat = 130
-        let timeLabelX = max(sidePad, min(w - sidePad - timeLabelW,
-                                          centerGroupCenterX - timeLabelW / 2))
-        elapsedLabel.frame = NSRect(x: timeLabelX, y: timeLabelY, width: timeLabelW, height: timeLabelH)
+        // Time label follows the left cluster, in the button row. It is shown only
+        // when it fits between the left cluster and the transport group.
+        let timeLabelH: CGFloat = 14
+        let timeLabelX = leftX
+        let timeLabelRoom = centerGroupLeft - gap - timeLabelX
+        let minimumTimeLabelWidth: CGFloat = 96
+        if !elapsedLabel.isHidden && timeLabelRoom < minimumTimeLabelWidth {
+            elapsedLabel.isHidden = true
+        }
+        elapsedLabel.frame = NSRect(x: timeLabelX,
+                                    y: (rowCenterY - timeLabelH / 2).rounded(),
+                                    width: max(0, min(130, timeLabelRoom)),
+                                    height: timeLabelH)
         remainingLabel.frame = .zero   // combined time shown in elapsedLabel
         syncAccessibilityExposure()
     }
@@ -424,6 +448,8 @@ final class BottomRailView: NSView {
     private func setupViews() {
         veil.wantsLayer = true
         addSubview(veil)
+        hairline.wantsLayer = true
+        addSubview(hairline)
 
         configure(queueButton, symbol: "square.split.2x1", label: "Toggle Queue Page", help: "Toggle Queue Page", identifier: "player.rail.queue", action: #selector(queueTapped), style: .utility, size: 11)
         updatePrefixButtonLabels()
@@ -443,19 +469,17 @@ final class BottomRailView: NSView {
         configure(fullscreenButton, symbol: "arrow.up.left.and.arrow.down.right", label: "Toggle Fullscreen", help: "Toggle Fullscreen", identifier: "player.rail.fullscreen", action: #selector(fullscreenTapped), size: 11)
 
         for label in [elapsedLabel, remainingLabel] {
-            label.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-            label.textColor = NSColor.white.withAlphaComponent(0.65)
+            label.font = .monospacedDigitSystemFont(ofSize: RailMetrics.timeLabelFontSize, weight: .medium)
             label.drawsBackground = false
-            label.alignment = .center
+            label.alignment = .left
             addSubview(label)
         }
+        applyTimeLabelColor()
         elapsedLabel.setAccessibilityLabel("Playback time")
         elapsedLabel.setAccessibilityIdentifier("player.rail.time")
 
-        // Draw the scrubber bar at the very top of the slider frame so the bar
-        // visually reads as the top edge of the rail veil (no transparent strip
-        // above the scrubber). Hit testing remains the full slider frame.
-        scrubber.cell = TopAlignedSliderCell()
+        // The slider frame is the full hit area; the cell draws the track centered in it.
+        scrubber.cell = RailScrubberCell()
         scrubber.minValue = 0
         scrubber.maxValue = 1
         scrubber.doubleValue = 0
@@ -521,7 +545,7 @@ final class BottomRailView: NSView {
         if let symbol {
             button.configureSymbol(symbol, pointSize: size, accessibilityLabel: label, help: help)
         } else {
-            button.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
+            button.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
             button.setAccessibilityLabel(label)
             button.setAccessibilityHelp(help)
             button.toolTip = help
@@ -800,41 +824,67 @@ fileprivate enum MoreMenuAction {
     case customPrefix, customPrefixSecondary, shuffle, replay, bookmark, settings
 }
 
-// MARK: - Top-aligned slider cell
+// MARK: - Rail scrubber cell
 
-/// Variant of the legacy KnoblessSliderCell that draws the track and progress
-/// fill flush with the absolute top pixel of the slider control (the scrubber
-/// frame's max-Y). The system-provided `rect` in drawBar(inside:flipped:) may
-/// be vertically inset, so this cell ignores the rect's vertical position and
-/// instead calculates barY from `controlView.bounds` to guarantee the bar
-/// touches the very top edge of the slider frame. The BottomRailView positions
-/// the scrubber so its top edge aligns with the rail veil's top edge, making
-/// the visible scrubber bar literally the topmost visible pixel of the shaded
-/// playback control bar. Click-to-seek and drag-to-seek remain functional
-/// because the slider frame is the full hit-test area. A compact custom knob
-/// remains centered on the same AppKit geometry as input tracking.
-fileprivate final class TopAlignedSliderCell: NSSliderCell {
+/// Draws the design system's scrubber: a 2 pt track vertically centered in the
+/// 14 pt slider frame, an optional 4 pt preview range, optional 1.5 × 8 pt
+/// segment ticks, the 2 pt played portion, and a 6 pt knob that grows to 8 pt
+/// on hover or drag (it does not grow under Reduce Motion). NSSliderCell still
+/// owns click and drag tracking over the full frame, and the knob stays
+/// centered on AppKit's knob position (`ScrubberTrackGeometry`, P115).
+fileprivate final class RailScrubberCell: NSSliderCell {
+
+    private var scrubber: ScrubberSlider? { controlView as? ScrubberSlider }
 
     override func drawKnob(_ knobRect: NSRect) {
         let fullRect = controlView?.bounds ?? knobRect
-        let trackRect = topAlignedBarRect(in: fullRect, flipped: controlView?.isFlipped ?? false)
+        let trackRect = centeredRect(in: fullRect, height: ScrubberStyle.trackHeight)
+        let diameter = ScrubberStyle.knobDiameter(
+            emphasized: scrubber?.isEmphasized ?? false,
+            reduceMotion: PlayerAccessibilityEnvironment.reduceMotion
+        )
         let visibleKnob = ScrubberTrackGeometry.visibleKnobRect(
             trackRect: trackRect,
-            knobRect: knobRect
+            knobRect: knobRect,
+            diameter: diameter
         )
 
-        NSColor.white.withAlphaComponent(0.88).setFill()
+        DWBColor.textPrimary.setFill()
         NSBezierPath(ovalIn: visibleKnob).fill()
     }
 
     override func drawBar(inside rect: NSRect, flipped: Bool) {
-        // Use the control view's full bounds to avoid any system inset that
-        // would leave a visible shaded strip above the scrubber bar.
+        // Use the control view's full bounds to avoid any system inset on the bar.
         let fullRect = controlView?.bounds ?? rect
-        let barRect = topAlignedBarRect(in: fullRect, flipped: flipped)
+        let increasedContrast = PlayerAccessibilityEnvironment.increaseContrast
+        let barRect = centeredRect(in: fullRect, height: ScrubberStyle.trackHeight)
 
-        NSColor.white.withAlphaComponent(0.15).setFill()
+        ScrubberStyle.trackColor(increaseContrast: increasedContrast).setFill()
         NSBezierPath(roundedRect: barRect, xRadius: 1, yRadius: 1).fill()
+
+        if let range = scrubber?.previewRange {
+            let lower = CGFloat(max(0, min(1, range.lowerBound)))
+            let upper = CGFloat(max(0, min(1, range.upperBound)))
+            let previewRect = centeredRect(in: fullRect, height: ScrubberStyle.rangeHeight)
+            let rangeRect = NSRect(x: previewRect.minX + lower * previewRect.width,
+                                   y: previewRect.minY,
+                                   width: max(0, (upper - lower) * previewRect.width),
+                                   height: previewRect.height)
+            PlayerTheme.current.accentFill.setFill()
+            NSBezierPath(roundedRect: rangeRect, xRadius: 2, yRadius: 2).fill()
+        }
+
+        if let ticks = scrubber?.tickPositions, !ticks.isEmpty {
+            ScrubberStyle.tickColor(increaseContrast: increasedContrast).setFill()
+            let tickBand = centeredRect(in: fullRect, height: ScrubberStyle.tickHeight)
+            for position in ticks {
+                let x = fullRect.minX + CGFloat(max(0, min(1, position))) * fullRect.width
+                NSRect(x: x - ScrubberStyle.tickWidth / 2,
+                       y: tickBand.minY,
+                       width: ScrubberStyle.tickWidth,
+                       height: tickBand.height).fill()
+            }
+        }
 
         if maxValue > minValue {
             // AppKit maps track clicks to the knob's travel range, which
@@ -845,14 +895,12 @@ fileprivate final class TopAlignedSliderCell: NSSliderCell {
                 trackRect: barRect,
                 knobRect: knobRect(flipped: flipped)
             )
-            NSColor.white.withAlphaComponent(0.72).setFill()
+            PlayerTheme.current.accentText.setFill()
             NSBezierPath(roundedRect: filled, xRadius: 1, yRadius: 1).fill()
         }
     }
 
-    private func topAlignedBarRect(in fullRect: NSRect, flipped: Bool) -> NSRect {
-        let height: CGFloat = 3
-        let y = flipped ? fullRect.minY : fullRect.maxY - height
-        return NSRect(x: fullRect.minX, y: y, width: fullRect.width, height: height)
+    private func centeredRect(in fullRect: NSRect, height: CGFloat) -> NSRect {
+        NSRect(x: fullRect.minX, y: fullRect.midY - height / 2, width: fullRect.width, height: height)
     }
 }

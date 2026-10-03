@@ -2,7 +2,6 @@ import Foundation
 
 enum SettingsDefaultsRegistry {
     enum Keys {
-        static let autoHideTransportWindowed = "autoHideTransportWindowed"
         static let persistedVolume = "lastEffectiveVolume"
         static let skipDurationSeconds = "skipDurationSeconds"
         static let autoHideTitlebar = "autoHideTitlebar"
@@ -17,7 +16,6 @@ enum SettingsDefaultsRegistry {
         static let videoPageDButtonEnabled = "videoPageDButtonEnabled"
         static let customPrefixValue = "customPrefixValue"
         static let customPrefixQueuePageEnabled = "customPrefixQueuePageEnabled"
-        static let customPrefixVideoPageEnabled = "customPrefixVideoPageEnabled"
         static let customPrefixSecondaryValue = "customPrefixValue2"
         static let debugConsoleEnabled = "debugConsoleEnabled"
         static let verboseAutoplayTrace = "verboseAutoplayTrace"
@@ -37,19 +35,6 @@ enum SettingsDefaultsRegistry {
         /// user tunes it once per output device rather than every session.
         static let audioSyncDelayMilliseconds = "audioSyncDelayMilliseconds"
 
-        enum OptionalTransportControl: CaseIterable {
-            case stop, volume, shuffle, repeatOne
-
-            var defaultsKey: String {
-                switch self {
-                case .stop:      return "showStopButton"
-                case .volume:    return "showVolumeButton"
-                case .shuffle:   return "showShuffleButton"
-                case .repeatOne: return "showRepeatButton"
-                }
-            }
-        }
-
     }
 
     enum Defaults {
@@ -66,8 +51,7 @@ enum SettingsDefaultsRegistry {
     }
 
     static func defaultValues(reduceMotionDefault: Bool) -> [String: Any] {
-        var defaults: [String: Any] = [
-            Keys.autoHideTransportWindowed: false,
+        let defaults: [String: Any] = [
             Keys.skipDurationSeconds: Defaults.skipDurationSeconds,
             Keys.imageDurationSeconds: Defaults.imageDurationSeconds,
             Keys.gifLoopCount: Defaults.gifLoopCount,
@@ -94,10 +78,6 @@ enum SettingsDefaultsRegistry {
             Keys.playerWindowOpacity: Defaults.playerWindowOpacity,
             Keys.audioSyncDelayMilliseconds: Defaults.audioSyncDelayMilliseconds,
         ]
-
-        for control in Keys.OptionalTransportControl.allCases {
-            defaults[control.defaultsKey] = false
-        }
 
         return defaults
     }

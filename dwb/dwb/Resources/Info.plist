@@ -64,6 +64,28 @@
 				<string>com.dwb.video.ogv-ogm</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>jpg</string>
+				<string>jpeg</string>
+				<string>jfif</string>
+				<string>png</string>
+				<string>gif</string>
+				<string>tiff</string>
+				<string>tif</string>
+				<string>bmp</string>
+				<string>heic</string>
+				<string>heif</string>
+				<string>webp</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>dwb player Image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+		</dict>
 	</array>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
@@ -75,6 +97,8 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAccentColorName</key>
+	<string>AccentColor</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSHumanReadableCopyright</key>

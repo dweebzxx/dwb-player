@@ -18,6 +18,36 @@ private enum MediaDropRouting {
         }
     }
 
+    /// Counts the droppable items so the drop zone can say how many will be added.
+    static func dropSummary(from sender: NSDraggingInfo) -> (fileCount: Int, folderCount: Int) {
+        guard let urls = readDroppedURLs(from: sender) else { return (0, 0) }
+        var files = 0
+        var folders = 0
+        for url in urls {
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            if isDir.boolValue {
+                folders += 1
+            } else if MediaFileSupport.isSupported(url) {
+                files += 1
+            }
+        }
+        return (files, folders)
+    }
+
+    /// The drop zone lives in the player window, above the rail, so both the
+    /// video and image surfaces drive the same overlay.
+    static func setDropZoneVisible(_ visible: Bool,
+                                   summary: (fileCount: Int, folderCount: Int)? = nil,
+                                   in window: NSWindow?) {
+        guard let wc = window?.windowController as? PlayerWindowController else { return }
+        if visible, let summary {
+            wc.showDropZone(fileCount: summary.fileCount, folderCount: summary.folderCount)
+        } else {
+            wc.hideDropZone()
+        }
+    }
+
     static func performDrop(_ sender: NSDraggingInfo, in window: NSWindow?) -> Bool {
         guard let urls = readDroppedURLs(from: sender),
               let wc = window?.windowController as? PlayerWindowController else { return false }
@@ -197,18 +227,19 @@ class VideoSurfaceView: NSView {
 
     // MARK: - Drag highlight
 
-    private func setDragHighlight(_ on: Bool) {
+    private func setDragHighlight(_ on: Bool, sender: NSDraggingInfo? = nil) {
         guard isDragHighlighted != on else { return }
         isDragHighlighted = on
-        layer?.borderWidth = on ? 3 : 0
-        layer?.borderColor = NSColor.systemBlue.cgColor
+        MediaDropRouting.setDropZoneVisible(on,
+                                            summary: sender.map { MediaDropRouting.dropSummary(from: $0) },
+                                            in: window)
     }
 
     // MARK: - NSDraggingDestination
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard isValidDrop(sender) else { return [] }
-        setDragHighlight(true)
+        setDragHighlight(true, sender: sender)
         return .copy
     }
 
@@ -217,10 +248,15 @@ class VideoSurfaceView: NSView {
             setDragHighlight(false)
             return []
         }
+        setDragHighlight(true, sender: sender)
         return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDragHighlight(false)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
         setDragHighlight(false)
     }
 
@@ -273,16 +309,17 @@ final class ImageSurfaceView: NSImageView {
         super.keyDown(with: event)
     }
 
-    private func setDragHighlight(_ on: Bool) {
+    private func setDragHighlight(_ on: Bool, sender: NSDraggingInfo? = nil) {
         guard isDragHighlighted != on else { return }
         isDragHighlighted = on
-        layer?.borderWidth = on ? 3 : 0
-        layer?.borderColor = NSColor.systemBlue.cgColor
+        MediaDropRouting.setDropZoneVisible(on,
+                                            summary: sender.map { MediaDropRouting.dropSummary(from: $0) },
+                                            in: window)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard MediaDropRouting.isValidDrop(sender) else { return [] }
-        setDragHighlight(true)
+        setDragHighlight(true, sender: sender)
         return .copy
     }
 
@@ -291,10 +328,15 @@ final class ImageSurfaceView: NSImageView {
             setDragHighlight(false)
             return []
         }
+        setDragHighlight(true, sender: sender)
         return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        setDragHighlight(false)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
         setDragHighlight(false)
     }
 
