@@ -327,6 +327,8 @@ final class UndoToastView: OverlayPanelView {
     private var nameWidth: CGFloat = 0
     private var buttonWidth: CGFloat = 0
     private var lastFilename: String?
+    /// 1 shows the filename; 2 or more shows "N files".
+    private var renamedCount = 1
 
     /// Runs the same undo as Command-Z.
     var onUndo: (() -> Void)?
@@ -352,7 +354,7 @@ final class UndoToastView: OverlayPanelView {
         undoButton.target = self
         undoButton.action = #selector(undoTapped)
         undoButton.setAccessibilityLabel("Undo")
-        undoButton.setAccessibilityHelp("Undo the last marker rename (\u{2318}Z)")
+        undoButton.setAccessibilityHelp("Undo the last marker rename, every file in it (\u{2318}Z)")
         undoButton.setAccessibilityIdentifier("player.undoToast.undo")
         addSubview(undoButton)
 
@@ -366,7 +368,7 @@ final class UndoToastView: OverlayPanelView {
 
     override func contrastDidChange() {
         applyColors()
-        if let lastFilename { updateName(lastFilename) }
+        updateSubject()
     }
 
     private var theme: DWBTheme { PlayerTheme.current }
@@ -375,11 +377,13 @@ final class UndoToastView: OverlayPanelView {
         let secondary = increaseContrast ? DWBColor.textPrimary : DWBColor.textSecondary
         let tertiary = increaseContrast ? DWBColor.textSecondary : DWBColor.textTertiary
         iconView.contentTintColor = secondary
-        captionLabel.attributedStringValue = NSAttributedString(string: "Renamed to", attributes: [
+        captionLabel.attributedStringValue = NSAttributedString(string: UndoToastMetrics.caption(renamedFileCount: renamedCount), attributes: [
             .font: NSFont.systemFont(ofSize: 12.5),
             .foregroundColor: secondary
         ])
-        captionWidth = ceil(captionLabel.attributedStringValue.size().width)
+        // `fittingSize` includes the cell's 2 pt text inset on each side; the attributed
+        // string's own width does not, and the caption would clip.
+        captionWidth = ceil(captionLabel.fittingSize.width)
 
         let title = NSMutableAttributedString(string: "Undo", attributes: [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
@@ -393,6 +397,26 @@ final class UndoToastView: OverlayPanelView {
         ]))
         undoButton.attributedTitle = title
         buttonWidth = ceil(title.size().width) + UndoToastMetrics.buttonHorizontalPadding * 2
+    }
+
+    /// The text after the caption: the filename for one file, "N files" for a batch.
+    private func updateSubject() {
+        if UndoToastMetrics.isBatch(renamedFileCount: renamedCount) {
+            updateBatchCount(renamedCount)
+        } else if let lastFilename {
+            updateName(lastFilename)
+        }
+    }
+
+    /// Semibold count with tabular digits; no filenames.
+    private func updateBatchCount(_ count: Int) {
+        let text = NSAttributedString(string: UndoToastMetrics.batchCountText(count), attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
+            .foregroundColor: DWBColor.textPrimary
+        ])
+        nameLabel.attributedStringValue = text
+        nameWidth = ceil(nameLabel.fittingSize.width)
+        needsLayout = true
     }
 
     private func updateName(_ filename: String) {
@@ -413,7 +437,7 @@ final class UndoToastView: OverlayPanelView {
             ], range: NSRange(location: 0, length: match.utf16Length))
         }
         nameLabel.attributedStringValue = text
-        nameWidth = ceil(text.size().width)
+        nameWidth = ceil(nameLabel.fittingSize.width)
         needsLayout = true
     }
 
@@ -421,8 +445,23 @@ final class UndoToastView: OverlayPanelView {
     /// current toast and restarts the hold.
     func present(renamedTo filename: String) {
         lastFilename = filename
+        renamedCount = 1
+        applyColors()
         updateName(filename)
-        let spoken = "Renamed to \(filename). Undo with Command Z."
+        announceAndPresent(UndoToastMetrics.spokenText(renamedFileCount: 1, filename: filename))
+    }
+
+    /// Shows the batch form for a successful multi-file marker rename: "Renamed N files".
+    /// Same replacement, hold and VoiceOver rules as the one-file toast.
+    func present(renamedFileCount count: Int) {
+        lastFilename = nil
+        renamedCount = count
+        applyColors()
+        updateBatchCount(count)
+        announceAndPresent(UndoToastMetrics.spokenText(renamedFileCount: count, filename: nil))
+    }
+
+    private func announceAndPresent(_ spoken: String) {
         setAccessibilityLabel(spoken)
         present(hold: UndoToastMetrics.hold)
         NSAccessibility.post(element: self,
@@ -460,6 +499,96 @@ final class UndoToastView: OverlayPanelView {
 
     @objc private func undoTapped() {
         onUndo?()
+    }
+}
+
+// MARK: - Status HUD
+
+/// Non-modal status HUD (`tokens-and-specs.md` 9.4): an icon, a title and an optional detail
+/// line. It sits in the volume HUD's slot and replaces it; the window controller keeps the
+/// two from showing together. Never takes the pointer.
+final class StatusHUDView: OverlayPanelView {
+    private let iconView = NSImageView()
+    private let titleLabel = makeLabel()
+    private let detailLabel = makeLabel()
+    private var content: StatusHUDContent?
+    private var textWidth: CGFloat = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        fadeDuration = DWBMotion.fade
+        iconView.imageScaling = .scaleProportionallyDown
+        iconView.setAccessibilityElement(false)
+        addSubview(iconView)
+        addSubview(titleLabel)
+        addSubview(detailLabel)
+        setAccessibilityIdentifier("player.statusHUD")
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+    }
+
+    required init?(coder: NSCoder) { fatalError("programmatic only") }
+
+    override func contrastDidChange() {
+        applyContent()
+    }
+
+    /// Shows `content`; a new call replaces the current one and restarts its hold.
+    func present(content: StatusHUDContent) {
+        self.content = content
+        applyContent()
+        present(hold: content.hold)
+        NSAccessibility.post(element: self,
+                             notification: .announcementRequested,
+                             userInfo: [.announcement: content.spokenText,
+                                        .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+    }
+
+    private func applyContent() {
+        guard let content else { return }
+        iconView.image = symbolImage(content.symbol, pointSize: StatusHUDMetrics.iconSize, weight: .regular)
+        iconView.contentTintColor = content.tone == .caution ? DWBColor.cautionText : DWBColor.textPrimary
+
+        titleLabel.attributedStringValue = NSAttributedString(string: content.title, attributes: [
+            .font: NSFont.systemFont(ofSize: StatusHUDMetrics.titleFontSize, weight: .semibold),
+            .foregroundColor: DWBColor.textPrimary
+        ])
+        detailLabel.attributedStringValue = NSAttributedString(string: content.detail ?? "", attributes: [
+            .font: NSFont.systemFont(ofSize: StatusHUDMetrics.detailFontSize),
+            .foregroundColor: DWBAppearance.shared.textSecondary
+        ])
+        detailLabel.isHidden = content.detail?.isEmpty ?? true
+        textWidth = ceil(max(titleLabel.fittingSize.width,
+                             detailLabel.isHidden ? 0 : detailLabel.fittingSize.width))
+        setAccessibilityLabel(content.spokenText)
+        needsLayout = true
+    }
+
+    private var titleHeight: CGFloat { ceil(titleLabel.intrinsicContentSize.height) }
+    private var detailHeight: CGFloat { detailLabel.isHidden ? 0 : ceil(detailLabel.intrinsicContentSize.height) }
+
+    func preferredSize(maxWidth: CGFloat) -> NSSize {
+        let natural = StatusHUDMetrics.leadingPadding + StatusHUDMetrics.iconSize + StatusHUDMetrics.iconGap
+            + textWidth + StatusHUDMetrics.trailingPadding
+        let width = min(max(0, maxWidth), StatusHUDMetrics.maxWidth, natural)
+        return NSSize(width: width,
+                      height: StatusHUDMetrics.height(titleHeight: titleHeight, detailHeight: detailHeight))
+    }
+
+    override func layout() {
+        super.layout()
+        let icon = StatusHUDMetrics.iconSize
+        iconView.frame = verticallyCentered(StatusHUDMetrics.leadingPadding, width: icon, height: icon, in: bounds)
+
+        let textX = StatusHUDMetrics.leadingPadding + icon + StatusHUDMetrics.iconGap
+        let textW = max(0, bounds.width - textX - StatusHUDMetrics.trailingPadding)
+        let block = titleHeight + (detailHeight > 0 ? StatusHUDMetrics.lineGap + detailHeight : 0)
+        var y = ((bounds.height - block) / 2).rounded()
+        if detailHeight > 0 {
+            detailLabel.frame = NSRect(x: textX, y: y, width: textW, height: detailHeight)
+            y += detailHeight + StatusHUDMetrics.lineGap
+        }
+        titleLabel.frame = NSRect(x: textX, y: y, width: textW, height: titleHeight)
     }
 }
 

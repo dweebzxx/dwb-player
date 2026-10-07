@@ -148,9 +148,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         DebugConsoleController.log(level: .warning,
                                    category: "window",
                                    message: "windowCapDenied: context=\(context) cap=\(maxPlayerWindowCount) current=\(windowControllers.count)")
+        let content = StatusHUDContent.windowLimit(maxWindows: maxPlayerWindowCount)
+        // The non-modal status HUD on the key player window, never an alert.
+        if let wc = usablePlayerWindowController() {
+            wc.showStatusHUD(content)
+            return
+        }
+        // No player window is visible to carry the HUD (all closed, minimized or hidden),
+        // so this one case keeps the alert.
         let alert = NSAlert()
-        alert.messageText = "Window limit reached"
-        alert.informativeText = "dwb player supports up to \(maxPlayerWindowCount) player windows."
+        alert.messageText = content.title
+        alert.informativeText = content.detail ?? ""
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         if let sheetWindow = NSApp.keyWindow ?? NSApp.mainWindow {

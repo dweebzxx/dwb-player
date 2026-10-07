@@ -173,13 +173,16 @@ final class RailButton: NSButton {
         updateFocusRingPath()
     }
 
+    /// Sizes the glyph from the rail's optical scale (D16): `DWBRailIcon.size(for:primary:)`.
+    /// `iconSize` overrides the scale for a button the spec sizes explicitly.
     func configureSymbol(_ symbolName: String,
-                         pointSize: CGFloat,
+                         primary: Bool = false,
+                         iconSize: CGFloat? = nil,
                          accessibilityLabel: String,
                          help: String,
                          fallbackNames: [String] = []) {
-        let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
         for candidate in [symbolName] + fallbackNames {
+            let cfg = NSImage.SymbolConfiguration(pointSize: iconSize ?? DWBRailIcon.size(for: candidate, primary: primary), weight: .medium)
             if let image = NSImage(systemSymbolName: candidate,
                                    accessibilityDescription: accessibilityLabel) {
                 self.image = image.withSymbolConfiguration(cfg) ?? image

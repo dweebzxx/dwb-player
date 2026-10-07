@@ -51,7 +51,9 @@ struct DWBTheme {
 }
 
 enum DWBMetrics {
-    static let railHeight: CGFloat = 68, railButton: CGFloat = 30, railButtonPrimary: CGFloat = 36, railIcon: CGFloat = 15
+    static let railHeight: CGFloat = 68, railButton: CGFloat = 30, railButtonPrimary: CGFloat = 36
+    // Optical rail icon scale (D16) — replaces flat railIcon 15.
+    static let railIconUtility: CGFloat = 11, railIconVolume: CGFloat = 12, railIconSkip: CGFloat = 13, railIconPrimary: CGFloat = 17
     static let scrubberTrack: CGFloat = 2, scrubberRange: CGFloat = 4, knob: CGFloat = 6, knobEmphasized: CGFloat = 8
     static let queueRowHeight: CGFloat = 56, queueRowInset: CGFloat = 4, queueHeaderHeight: CGFloat = 52
     static let settingsSize = NSSize(width: 820, height: 550), settingsMinSize = NSSize(width: 760, height: 500)
@@ -60,10 +62,27 @@ enum DWBMetrics {
     static let radiusTag: CGFloat = 3, radiusKey: CGFloat = 4, radiusBanner: CGFloat = 5, radiusControl: CGFloat = 6, radiusRow: CGFloat = 8, radiusCard: CGFloat = 10, radiusPill: CGFloat = 12
     static let focusWidth: CGFloat = 2, focusWidthIC: CGFloat = 3, locatorWidth: CGFloat = 3
     static let disabledAlpha: CGFloat = 0.32
+    // Gap-analysis additions (2026-10-03)
+    static let queueRowDense: CGFloat = 32, dropLine: CGFloat = 2, dropRing: CGFloat = 8, playNextTag: CGFloat = 16
+    static let renameSheetWidth: CGFloat = 400, batchSheetWidth: CGFloat = 420, sheetFieldHeight: CGFloat = 24
+    static let statusHUDMinHeight: CGFloat = 44, hudBottomOffset: CGFloat = 132
+    static let paneChip: CGFloat = 22, paneChipGap: CGFloat = 4, paneSpinner: CGFloat = 28
+    static let skimStripHeight: CGFloat = 54, skimWindowMinWidth: CGFloat = 980, skimRestoreHandle = NSSize(width: 30, height: 20)
+    static let prefixSwatch: CGFloat = 8, aboutIcon: CGFloat = 96, aboutTitle: CGFloat = 26
+}
+
+enum DWBRailIcon {
+    /// Optical point size for a rail symbol (D16).
+    static func size(for symbol: String, primary: Bool = false) -> CGFloat {
+        if primary { return DWBMetrics.railIconPrimary }
+        if symbol.hasPrefix("speaker") || symbol == "ellipsis" { return DWBMetrics.railIconVolume }
+        if ["gobackward", "goforward", "backward.end", "forward.end", "backward.frame", "forward.frame"].contains(where: symbol.hasPrefix) { return DWBMetrics.railIconSkip }
+        return DWBMetrics.railIconUtility
+    }
 }
 
 enum DWBMotion {
     static let hover: TimeInterval = 0.12, fade: TimeInterval = 0.18, rail: TimeInterval = 0.25
-    static let volumeHold: TimeInterval = 1.25, syncHold: TimeInterval = 1.8, failureHold: TimeInterval = 3.0, locatorHold: TimeInterval = 2.0
+    static let volumeHold: TimeInterval = 1.25, scaleHUDHold: TimeInterval = 1.25, windowLimitHold: TimeInterval = 2.5, audioPulse: TimeInterval = 1.6, syncHold: TimeInterval = 1.8, failureHold: TimeInterval = 3.0, locatorHold: TimeInterval = 2.0
     static func duration(_ d: TimeInterval, reduceMotion: Bool) -> TimeInterval { reduceMotion ? 0 : d }
 }

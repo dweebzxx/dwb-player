@@ -145,6 +145,8 @@ class PlayerWindowController: NSWindowController {
 
     private let failureMessageView   = FailureMessageView()
     private let undoToastView        = UndoToastView()
+    /// Non-modal status HUD (scale mode, window limit). Takes the volume HUD's slot.
+    private let statusHUDView        = StatusHUDView()
     private let dropZoneOverlay      = DropZoneOverlayView()
 
     // MARK: - Keep-at-top
@@ -528,6 +530,7 @@ class PlayerWindowController: NSWindowController {
             self?.setVolumeFromBar(vol)
         }
         cv.addSubview(volumeBar)
+        cv.addSubview(statusHUDView)
 
         audioDelayBar = AudioDelayBarView(frame: .zero)
         cv.addSubview(audioDelayBar)
@@ -1012,6 +1015,9 @@ class PlayerWindowController: NSWindowController {
                                  width: barW,
                                  height: barH)
 
+        // Status HUD: the same slot as the volume HUD, centered over the same rail.
+        positionStatusHUD(over: transport.frame, slotY: barY, containerHeight: b.height)
+
         // Audio sync HUD: stacked directly above the volume HUD so the two never overlap
         // if both happen to be visible at once.
         let delayBarW = AudioDelayBarView.preferredSize.width
@@ -1090,6 +1096,41 @@ class PlayerWindowController: NSWindowController {
         )
     }
 
+    /// The status HUD sits where the volume HUD does: centered over the transport, with its
+    /// bottom `DWBMetrics.hudBottomOffset` above the stage bottom.
+    private func positionStatusHUD(over transportFrame: NSRect, slotY: CGFloat, containerHeight: CGFloat) {
+        let size = statusHUDView.preferredSize(maxWidth: transportFrame.width - 32)
+        let centeredX = transportFrame.midX - size.width / 2
+        let x = min(max(transportFrame.minX, centeredX), max(transportFrame.minX, transportFrame.maxX - size.width))
+        let y = min(max(0, slotY), max(0, containerHeight - size.height - 12))
+        statusHUDView.frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    private func repositionStatusHUD() {
+        guard let cv = window?.contentView else { return }
+        let railTop = transport.frame.minY + transport.unifiedBottomRailHeight
+        positionStatusHUD(over: transport.frame,
+                          slotY: railTop + HUDStackMetrics.bottomOffsetAboveRail,
+                          containerHeight: cv.bounds.height)
+    }
+
+    /// Shows the status HUD in the volume HUD's slot. One HUD at a time: it replaces a
+    /// volume HUD that is up, and a later volume change replaces it. Never a modal alert.
+    func showStatusHUD(_ content: StatusHUDContent) {
+        guard window?.isVisible == true else { return }
+        // Leave the volume HUD alone while the user is dragging its meter.
+        guard !volumeBar.defersHide else { return }
+        volumeBar.dismiss()
+        statusHUDView.present(content: content)
+        repositionStatusHUD()
+    }
+
+    /// Volume HUD entry point: replaces a status HUD that is up.
+    private func showVolumeHUD(volume: Int32) {
+        statusHUDView.dismiss()
+        volumeBar.show(volume: volume)
+    }
+
     private func positionUndoToast() {
         guard undoToastView.superview != nil else { return }
         let videoFrame = videoSurface?.frame ?? .zero
@@ -1125,19 +1166,28 @@ class PlayerWindowController: NSWindowController {
         positionUndoToast()
     }
 
+    private func showUndoToast(renamedFileCount count: Int) {
+        undoToastView.present(renamedFileCount: count)
+        positionUndoToast()
+    }
+
     private func hideUndoToast() {
         undoToastView.dismiss()
     }
 
-    /// Records a completed marker rename for Command-Z. A rename of one file
-    /// also shows the undo toast; a multi-file rename shows none, and clears
-    /// any toast left over from an earlier rename.
+    /// Records a completed marker rename for Command-Z and shows the undo toast: the
+    /// filename for one file, "Renamed N files" for a batch. Either form replaces any toast
+    /// left over from an earlier rename; Undo and Command-Z revert the whole step.
     private func recordMarkerRename(entries: [MarkerRenameUndoEntry]) {
         markerRenameUndoState.record(entries: entries)
-        if UndoToastMetrics.shouldShow(forRenamedFileCount: entries.count), let entry = entries.first {
-            showUndoToast(renamedTo: entry.renamedURL.lastPathComponent)
-        } else {
+        guard UndoToastMetrics.shouldShow(forRenamedFileCount: entries.count), let entry = entries.first else {
             hideUndoToast()
+            return
+        }
+        if UndoToastMetrics.isBatch(renamedFileCount: entries.count) {
+            showUndoToast(renamedFileCount: entries.count)
+        } else {
+            showUndoToast(renamedTo: entry.renamedURL.lastPathComponent)
         }
     }
 
@@ -1642,8 +1692,11 @@ class PlayerWindowController: NSWindowController {
     private func refreshQueuePageNow() {
         let urls = displayOrder.map { playbackSet[$0] }
         var qItems: [QueuePageView.Item] = []
+        // Positions in the Play Next chain (1-based), by set index.
+        var playNextPositions: [Int: Int] = [:]
+        for (offset, setIndex) in pendingPlayNextSetIndices.enumerated() { playNextPositions[setIndex] = offset + 1 }
 
-        for url in urls {
+        for (displayIndex, url) in urls.enumerated() {
             let size = MediaFileSupport.fileSizeString(for: url)
             let dur: String
             if MediaFileSupport.isImage(url) {
@@ -1676,7 +1729,8 @@ class PlayerWindowController: NSWindowController {
                 duration: dur,
                 fileSize: size,
                 isBookmarked: BookmarkStore.shared.isBookmarked(url: url),
-                isFailed: failedPlaybackPaths.contains(url.standardizedFileURL.path)
+                isFailed: failedPlaybackPaths.contains(url.standardizedFileURL.path),
+                playNextPosition: displayIndex < displayOrder.count ? playNextPositions[displayOrder[displayIndex]] : nil
             ))
         }
 
@@ -1721,28 +1775,22 @@ class PlayerWindowController: NSWindowController {
         let url  = playbackSet[pbIdx]
         let ext  = url.pathExtension
         let stem = url.deletingPathExtension().lastPathComponent
+        let folder = url.deletingLastPathComponent()
 
-        let alert = NSAlert()
-        alert.messageText     = "Rename File"
-        alert.informativeText = "New name for \"\(url.lastPathComponent)\":"
-        alert.addButton(withTitle: "Rename")
-        alert.addButton(withTitle: "Cancel")
-
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        field.stringValue       = stem
-        field.placeholderString = ext.isEmpty ? "filename" : "filename.\(ext)"
-        alert.accessoryView     = field
-
-        alert.beginSheetModal(for: win) { [weak self, weak field] response in
-            guard response == .alertFirstButtonReturn,
-                  let self = self,
-                  let field = field else { return }
-            let newStem = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let newName = ext.isEmpty ? newStem : "\(newStem).\(ext)"
-            self.renameFile(at: pbIdx, to: newName)
-        }
-
-        DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+        // The design system's rename sheet (9.3). Its validation only prevents a rename that
+        // `renameFile(at:to:)` would reject; that method and its failure sheet are unchanged.
+        DWBRenameSheet.present(
+            on: win,
+            filename: url.lastPathComponent,
+            stem: stem,
+            fileExtension: ext,
+            nameExists: { name in
+                FileManager.default.fileExists(atPath: folder.appendingPathComponent(name, isDirectory: false).path)
+            },
+            onRename: { [weak self] newName in
+                self?.renameFile(at: pbIdx, to: newName)
+            }
+        )
     }
 
     func removeCurrentQueueItem() {
@@ -3932,7 +3980,7 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("audio", "volumeChange: window=\(debugIdentity) old=\(oldVol) new=\(newVol) wasMuted=\(wasMuted) muted=\(windowMuted)")
         applyWindowAudioState(reason: "volume-adjust")
         persistVolume(newVol)
-        volumeBar.show(volume: newVol)
+        showVolumeHUD(volume: newVol)
     }
 
     func setVolumeFromBar(_ vol: Int32) {
@@ -3944,11 +3992,11 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("audio", "volumeSet: window=\(debugIdentity) old=\(oldVol) new=\(newVol) wasMuted=\(wasMuted) muted=\(windowMuted)")
         applyWindowAudioState(reason: "volume-bar")
         persistVolume(newVol)
-        volumeBar.show(volume: newVol)
+        showVolumeHUD(volume: newVol)
     }
 
     func showVolumeBar(volume: Int32) {
-        volumeBar.show(volume: volume)
+        showVolumeHUD(volume: volume)
     }
 
     func toggleMuteFromTransport() {
@@ -3962,7 +4010,7 @@ class PlayerWindowController: NSWindowController {
         }
         DebugConsoleController.log("audio", "muteToggle: window=\(debugIdentity) oldMuted=\(wasMuted) newMuted=\(windowMuted) storedVolume=\(windowVolume)")
         let applied = applyWindowAudioState(reason: "mute-toggle")
-        volumeBar.show(volume: applied.volume)
+        showVolumeHUD(volume: applied.volume)
     }
 
     func volumeUp()   { adjustVolume(by: 10)  }
@@ -4052,6 +4100,7 @@ class PlayerWindowController: NSWindowController {
     func setScaleMode(_ mode: ScaleMode) {
         scaleMode = mode
         applyScaleMode()
+        showStatusHUD(.scale(mode))
     }
 
     private func applyScaleMode() {
@@ -4932,16 +4981,17 @@ extension PlayerWindowController: QueuePageViewDelegate {
             }
         } else {
             // Multi-file: show confirmation before any filesystem mutation.
-            let count = pendingRenames.count
             let invokedPrefix = invokedPrimary ? primary : secondary
-            let alert = NSAlert()
-            alert.messageText = "Rename \(count) Files?"
-            alert.informativeText = "Applying prefix transition for \"\(invokedPrefix)\" will rename \(count) files on disk. This cannot be undone from within the app."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Rename \(count) Files")
-            alert.addButton(withTitle: "Cancel")
-            alert.beginSheetModal(for: win) { [weak self] response in
-                guard response == .alertFirstButtonReturn, let self = self else { return }
+            let previewRenames = pendingRenames.map { (old: $0.oldName, new: $0.newName) }
+            DWBBatchRenameSheet.present(
+                on: win,
+                prefix: invokedPrefix,
+                isPrimary: invokedPrimary,
+                primaryPrefix: primary,
+                secondaryPrefix: secondary,
+                renames: previewRenames
+            ) { [weak self] in
+                guard let self = self else { return }
                 var allRenamesSucceeded = true
                 for r in pendingRenames {
                     guard r.pbIdx < self.playbackSet.count else { continue }

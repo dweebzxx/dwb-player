@@ -669,7 +669,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         windowOpacityPercentLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
         windowOpacityPercentLabel.alignment = .right
         windowOpacityPercentLabel.translatesAutoresizingMaskIntoConstraints = false
-        windowOpacityPercentLabel.widthAnchor.constraint(equalToConstant: 46).isActive = true
+        windowOpacityPercentLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
         let applyPercentColor: () -> Void = { [weak self] in
             self?.windowOpacityPercentLabel.textColor = DWBAppearance.shared.textSecondary
         }
@@ -799,101 +799,28 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         let version = info?["CFBundleShortVersionString"] as? String ?? "—"
         let build   = info?["CFBundleVersion"]            as? String ?? "—"
 
-        func makeLabel(_ text: String,
-                       size: CGFloat = 13,
-                       weight: NSFont.Weight = .regular,
-                       color: @escaping () -> NSColor = { DWBColor.textPrimary }) -> NSTextField {
-            let lbl = NSTextField(labelWithString: text)
-            lbl.font = .systemFont(ofSize: size, weight: weight)
-            lbl.textColor = color()
-            lbl.isSelectable = false
-            lbl.translatesAutoresizingMaskIntoConstraints = false
-            contrastRefreshers.append { lbl.textColor = color() }
-            return lbl
-        }
-
-        let iconView = NSImageView()
-        iconView.image = NSImage(named: NSImage.applicationIconName)
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            iconView.widthAnchor.constraint(equalToConstant: 88),
-            iconView.heightAnchor.constraint(equalToConstant: 88)
-        ])
-
-        let nameLabel = makeLabel("dwb player", size: 26, weight: .semibold)
-        let versionLabel = makeLabel("Version \(version)  ·  Build \(build)",
-                                     size: 13,
-                                     color: { DWBAppearance.shared.textSecondary })
-        let descLabel = makeLabel("Local media playback for macOS",
-                                  size: 11,
-                                  color: { DWBAppearance.shared.textTertiary })
-        let identityStack = NSStackView(views: [nameLabel, versionLabel, descLabel])
-        identityStack.orientation = .vertical
-        identityStack.alignment = .leading
-        identityStack.spacing = 5
-        identityStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let headerStack = NSStackView(views: [iconView, identityStack])
-        headerStack.orientation = .horizontal
-        headerStack.alignment = .centerY
-        headerStack.spacing = 18
-        headerStack.translatesAutoresizingMaskIntoConstraints = false
-
-        func metadataRow(label: String, value: String) -> NSView {
-            let key = makeLabel(label, size: 11, weight: .medium)
-            key.alignment = .right
-            key.widthAnchor.constraint(equalToConstant: 82).isActive = true
-            let valueLabel = makeLabel(value, size: 11, color: { DWBAppearance.shared.textSecondary })
-            valueLabel.lineBreakMode = .byTruncatingMiddle
-            valueLabel.toolTip = value
-            let row = NSStackView(views: [key, valueLabel])
-            row.orientation = .horizontal
-            row.alignment = .firstBaseline
-            row.spacing = 12
-            return row
-        }
-
-        let metadataStack = NSStackView(views: [
-            metadataRow(label: "License", value: "MIT License"),
-            metadataRow(label: "System", value: "macOS 13 or later"),
-            metadataRow(label: "Interface", value: "AppKit"),
-            metadataRow(label: "Playback", value: "VLCKit \(Self.vlcBackendVersionText())"),
-        ])
-        metadataStack.orientation = .vertical
-        metadataStack.alignment = .leading
-        metadataStack.spacing = 7
-
-        // Keep external project links grouped in the About pane.
-        let githubButton = makeAboutLinkButton(
-            title: "View on GitHub",
-            action: #selector(openGitHubRepository(_:)),
-            identifier: "settings.about.github"
+        // No page header: About carries its own identity block (design system 9.5).
+        let about = AboutPageView(
+            version: version,
+            build: build,
+            description: "Local media playback for macOS",
+            facts: [
+                ("License", "MIT License"),
+                ("System", "macOS 13 or later"),
+                ("Interface", "AppKit"),
+                ("Playback", "VLCKit \(Self.vlcBackendVersionText())")
+            ],
+            links: [
+                AboutPageView.Link(title: "View on GitHub", identifier: "settings.about.github") { [weak self] in
+                    self?.openGitHubRepository(NSNull())
+                },
+                AboutPageView.Link(title: "Report an Issue", identifier: "settings.about.issues") { [weak self] in
+                    self?.openGitHubIssues(NSNull())
+                }
+            ],
+            copyright: "© dwb"
         )
-        let issueButton = makeAboutLinkButton(
-            title: "Report an Issue",
-            action: #selector(openGitHubIssues(_:)),
-            identifier: "settings.about.issues"
-        )
-        let actionStack = NSStackView(views: [githubButton, issueButton])
-        actionStack.orientation = .horizontal
-        actionStack.spacing = 8
-
-        let copyrightLabel = makeLabel("© dwb", size: 10.5, color: { DWBAppearance.shared.textTertiary })
-
-        let identity = buildSection(title: nil, rows: [headerStack])
-        let details = buildSection(title: nil, rows: [metadataStack, actionStack, copyrightLabel])
-        return buildPage(index: 5, sections: [identity, details])
-    }
-
-    private func makeAboutLinkButton(title: String,
-                                     action: Selector,
-                                     identifier: String) -> NSButton {
-        let button = DWBButton(title: title, variant: .secondary)
-        button.target = self
-        button.action = action
-        button.setAccessibilityIdentifier(identifier)
-        return button
+        return buildPage(index: 5, sections: [about], showsHeader: false)
     }
 
     // MARK: - Section: Shortcuts
@@ -1001,8 +928,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             constraints += [
                 dot.leadingAnchor.constraint(equalTo: labelColumn.leadingAnchor),
                 dot.centerYAnchor.constraint(equalTo: lbl.firstBaselineAnchor, constant: -4.5),
-                dot.widthAnchor.constraint(equalToConstant: 8),
-                dot.heightAnchor.constraint(equalToConstant: 8),
+                dot.widthAnchor.constraint(equalToConstant: DWBMetrics.prefixSwatch),
+                dot.heightAnchor.constraint(equalToConstant: DWBMetrics.prefixSwatch),
                 lbl.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6)
             ]
         } else {
@@ -1021,9 +948,69 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
 
     /// One Settings page: the shared header (20 pt title, one-line description, hairline)
     /// above flat sections, inside a scroll view with the design system's page insets.
-    private func buildPage(index: Int, sections: [NSView]) -> NSView {
+    /// About passes `showsHeader: false`; it carries no page header (9.5).
+    private func buildPage(index: Int, sections: [NSView], showsHeader: Bool = true) -> NSView {
         let page = SettingsPages.all[index]
 
+        let headerBlock: NSView? = showsHeader ? makeSettingsPageHeader(for: page) : nil
+
+        let stack = NSStackView(views: (headerBlock.map { [$0] } ?? []) + sections)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = DWBMetrics.sectionGap
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = DWBColor.surface
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let documentView = SettingsFlippedView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stack)
+
+        // Page insets from `DWBMetrics.insets`. The 54 pt top inset is measured from the
+        // window's top edge, so the standard title bar supplies the first 30 pt.
+        let insets = DWBMetrics.insets
+        let topInset = max(0, insets.top - 30)
+        let trailing = stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -insets.right)
+        trailing.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: topInset),
+            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: insets.left),
+            trailing,
+            stack.widthAnchor.constraint(lessThanOrEqualToConstant: DWBMetrics.contentMax),
+            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -insets.bottom)
+        ])
+        headerBlock?.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        for section in sections {
+            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+
+        scrollView.documentView = documentView
+        container.addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+        ])
+        container.setAccessibilityLabel("\(page.name) settings")
+
+        return container
+    }
+
+    /// The shared page header: 20 pt title, one-line description and a hairline.
+    private func makeSettingsPageHeader(for page: SettingsPages.Page) -> NSView {
         let title = NSTextField(labelWithString: page.name)
         title.font = .systemFont(ofSize: 20, weight: .semibold)
         title.textColor = DWBColor.textPrimary
@@ -1064,59 +1051,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             hairline.bottomAnchor.constraint(equalTo: headerBlock.bottomAnchor)
         ])
 
-        let stack = NSStackView(views: [headerBlock] + sections)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = DWBMetrics.sectionGap
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.drawsBackground = true
-        scrollView.backgroundColor = DWBColor.surface
-        scrollView.borderType = .noBorder
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        let documentView = SettingsFlippedView()
-        documentView.translatesAutoresizingMaskIntoConstraints = false
-        documentView.addSubview(stack)
-
-        // Page insets from `DWBMetrics.insets`. The 54 pt top inset is measured from the
-        // window's top edge, so the standard title bar supplies the first 30 pt.
-        let insets = DWBMetrics.insets
-        let topInset = max(0, insets.top - 30)
-        let trailing = stack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -insets.right)
-        trailing.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: topInset),
-            stack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: insets.left),
-            trailing,
-            stack.widthAnchor.constraint(lessThanOrEqualToConstant: DWBMetrics.contentMax),
-            stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -insets.bottom),
-            headerBlock.widthAnchor.constraint(equalTo: stack.widthAnchor)
-        ])
-        for section in sections {
-            section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
-        scrollView.documentView = documentView
-        container.addSubview(scrollView)
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-
-            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
-        ])
-        container.setAccessibilityLabel("\(page.name) settings")
-
-        return container
+        return headerBlock
     }
 
     // MARK: - Actions
@@ -1618,7 +1553,7 @@ private final class SettingsSwatchView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 4
+        layer?.cornerRadius = DWBMetrics.prefixSwatch / 2
         layer?.backgroundColor = color.cgColor
         setAccessibilityElement(false)
     }

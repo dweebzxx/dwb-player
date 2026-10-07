@@ -28,6 +28,8 @@ enum QueuePanelMetrics {
     static let rowTrailingPadding: CGFloat = 10
     static let rowContentGap: CGFloat = 8
     static let titleMetaGap: CGFloat = 3
+    /// Gap between the filename and the Play Next tag that follows it.
+    static let titleTagGap: CGFloat = 6
 
     static let sectionLabelKern: CGFloat = 0.4          // +4% of 10 pt
 
@@ -177,5 +179,79 @@ struct QueueFooterLayoutPlan: Equatable {
             return QueueFooterLayoutPlan(usesCompactIcons: compactIcons, usesCompactUndo: true, usesPrefixOverflow: false)
         }
         return QueueFooterLayoutPlan(usesCompactIcons: compactIcons, usesCompactUndo: true, usesPrefixOverflow: hasPrefixActions)
+    }
+}
+
+// MARK: - Queue interactions (`tokens-and-specs.md` 9.7)
+
+/// The search highlight: the first case- and accent-insensitive match of the query in a
+/// filename, the same comparison the search filter uses.
+enum QueueSearchHighlight {
+    static func firstMatch(in name: String, query: String) -> NSRange? {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty,
+              let range = name.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else { return nil }
+        return NSRange(range, in: name)
+    }
+}
+
+/// The two filtered empty states: a neutral 44 pt circle with a glyph, the title and one
+/// button. (An empty queue keeps its own state with the app icon.)
+enum QueueFilteredEmptyState: Equatable {
+    case noMatches
+    case noBookmarks
+
+    static let circleDiameter: CGFloat = 44
+    static let glyphSize: CGFloat = 18
+
+    /// A search query always reads as "no matching files"; only a bookmark filter on its own
+    /// reads as "no bookmarked media".
+    static func make(query: String, bookmarkFilterEnabled: Bool) -> QueueFilteredEmptyState {
+        let hasQuery = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return bookmarkFilterEnabled && !hasQuery ? .noBookmarks : .noMatches
+    }
+
+    var title: String {
+        switch self {
+        case .noMatches: return "No matching files"
+        case .noBookmarks: return "No bookmarked media"
+        }
+    }
+
+    var actionTitle: String {
+        switch self {
+        case .noMatches: return "Clear Search"
+        case .noBookmarks: return "Show All Media"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .noMatches: return "magnifyingglass"
+        case .noBookmarks: return "bookmark.slash"
+        }
+    }
+}
+
+/// The drop line shown between rows while drag-reordering in Manual sort: a 2 pt line in
+/// the row gap with an 8 pt ring at its leading edge, inset 4 pt from the row edges.
+enum QueueDropIndicatorMetrics {
+    static let sideInset: CGFloat = 4
+    static let lineHeight = DWBMetrics.dropLine
+    static let ringDiameter = DWBMetrics.dropRing
+    static let ringBorder: CGFloat = 2
+    /// The dragged row stays in the list at this alpha.
+    static let draggedRowAlpha: CGFloat = 0.4
+
+    /// Ring and line inside a view `width` wide and one ring tall. The line starts under the
+    /// ring (1 pt in from its far edge) and runs to the trailing edge.
+    static func geometry(width: CGFloat) -> (ring: NSRect, line: NSRect) {
+        let ring = NSRect(x: 0, y: 0, width: ringDiameter, height: ringDiameter)
+        let lineX = ringDiameter - 1
+        let line = NSRect(x: lineX,
+                          y: (ringDiameter - lineHeight) / 2,
+                          width: max(0, width - lineX),
+                          height: lineHeight)
+        return (ring, line)
     }
 }

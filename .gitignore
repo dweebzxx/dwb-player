@@ -94,8 +94,6 @@ node_modules/
 
 # Local-only workflow and internal artifacts (unrelated to Tier 2 workflow split)
 assets/
-dwb/dwbTests/
-scripts/test.sh
 .github/workflows/
 
 # Host Workflow Operator assets

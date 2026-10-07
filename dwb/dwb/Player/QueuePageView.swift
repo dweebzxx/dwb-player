@@ -57,6 +57,8 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         var isBookmarked: Bool = false
         /// True when playback of this file failed in this window. Display-only.
         var isFailed: Bool = false
+        /// 1-based position in the Play Next chain; nil when the item is not waiting in it.
+        var playNextPosition: Int? = nil
     }
 
     private enum VisibleRow {
@@ -159,6 +161,8 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
     let tableView                = QueuePageTableView()
     private let emptyStateView   = NSView()
     private let emptyStateLogoView = NSImageView()
+    private let emptyStateCircleView = NSView()
+    private let emptyStateGlyphView = NSImageView()
     private let emptyStateLabel  = NSTextField(labelWithString: "No media in queue")
     private let emptyStateDetailLabel = NSTextField(labelWithString: "Add files or folders to build the queue.")
     private let addMediaButton   = QueuePillButton(style: .outlineAccent, labelColor: { PlayerTheme.current.accentText })
@@ -178,6 +182,9 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         case clearFilters
     }
     private var emptyStateAction: EmptyStateAction = .addMedia
+    private let dropIndicator = QueueDropIndicatorView(frame: .zero)
+    /// The visible row being dragged, shown at 0.4 alpha until the drag ends.
+    private var draggedVisibleRow: Int?
     private var usesCompactFooterIcons = false
 
     // Column identifiers
@@ -387,6 +394,10 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         // Enable row reordering via drag-and-drop
         tableView.registerForDraggedTypes([Self.draggedRowType])
         tableView.setDraggingSourceOperationMask(.move, forLocal: true)
+        // The drop line (9.7) replaces the system's insertion indicator.
+        tableView.draggingDestinationFeedbackStyle = .none
+        tableView.onDragEnded = { [weak self] in self?.endDragFeedback() }
+        tableView.addSubview(dropIndicator)
 
         let lockedClipView = LockedHorizontalClipView()
         lockedClipView.drawsBackground = false
@@ -417,6 +428,18 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         emptyStateLogoView.wantsLayer = true
         emptyStateLogoView.contentFilters = Self.fadedIconFilters()
         emptyStateView.addSubview(emptyStateLogoView)
+
+        // The filtered empty states use a neutral circle with a glyph instead of the app icon.
+        emptyStateCircleView.wantsLayer = true
+        emptyStateCircleView.layer?.cornerRadius = QueueFilteredEmptyState.circleDiameter / 2
+        emptyStateCircleView.layer?.borderWidth = 1
+        emptyStateCircleView.isHidden = true
+        emptyStateView.addSubview(emptyStateCircleView)
+        emptyStateGlyphView.imageScaling = .scaleProportionallyDown
+        emptyStateGlyphView.setAccessibilityElement(false)
+        emptyStateGlyphView.isHidden = true
+        emptyStateView.addSubview(emptyStateGlyphView)
+        applyEmptyStateCircleAppearance()
 
         emptyStateLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         emptyStateLabel.textColor = DWBColor.textPrimary
@@ -813,7 +836,9 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         let b = emptyStateView.bounds
         let contentW = min(b.width, 320)
         let x = floor((b.width - contentW) / 2)
-        let iconSize: CGFloat = 96
+        let showsCircle = !emptyStateCircleView.isHidden
+        // The app icon, or the 44 pt circle for a filtered state, leads the block.
+        let iconSize: CGFloat = showsCircle ? QueueFilteredEmptyState.circleDiameter : 96
         let buttonH = QueuePanelMetrics.footerPillHeight
         let buttonW = max(96, addMediaButton.preferredWidth())
         let showsButton = !addMediaButton.isHidden
@@ -824,7 +849,18 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         var y = floor((b.height + totalH) / 2)
 
         y -= iconSize
-        emptyStateLogoView.frame = NSRect(x: floor((b.width - iconSize) / 2), y: y, width: iconSize, height: iconSize)
+        let iconFrame = NSRect(x: floor((b.width - iconSize) / 2), y: y, width: iconSize, height: iconSize)
+        if showsCircle {
+            emptyStateCircleView.frame = iconFrame
+            let glyphSide = QueueFilteredEmptyState.glyphSize
+            emptyStateGlyphView.frame = NSRect(x: iconFrame.midX - glyphSide / 2, y: iconFrame.midY - glyphSide / 2,
+                                               width: glyphSide, height: glyphSide)
+            emptyStateLogoView.frame = .zero
+        } else {
+            emptyStateLogoView.frame = iconFrame
+            emptyStateCircleView.frame = .zero
+            emptyStateGlyphView.frame = .zero
+        }
         y -= 16 + titleH
         emptyStateLabel.frame = NSRect(x: x, y: y, width: contentW, height: titleH)
         y -= 4 + detailH
@@ -1258,20 +1294,24 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
             addMediaButton.setAccessibilityHelp("Choose local files or folders to add to the queue")
             addMediaButton.setAccessibilityIdentifier("queue.empty.addMedia")
             addMediaButton.isHidden = false
+            showsFilteredEmptyStateGlyph(nil)
             emptyStateView.isHidden = false
             scrollView.isHidden = true
             emptyStateView.setAccessibilityLabel("Queue empty")
             emptyStateView.setAccessibilityValue(emptyStateDetailLabel.stringValue)
         } else if visibleItems.isEmpty {
-            if bookmarkFilterEnabled && currentSearchQuery.isEmpty {
-                emptyStateLabel.stringValue = "No bookmarked files in queue"
+            let filtered = QueueFilteredEmptyState.make(query: currentSearchQuery,
+                                                        bookmarkFilterEnabled: bookmarkFilterEnabled)
+            emptyStateLabel.stringValue = filtered.title
+            switch filtered {
+            case .noBookmarks:
                 emptyStateDetailLabel.stringValue = "Show all queued files or bookmark an item from the playback bar."
-            } else {
-                emptyStateLabel.stringValue = "No matching files"
+            case .noMatches:
                 emptyStateDetailLabel.stringValue = "Clear the current search and bookmark filter to show the queue."
             }
+            showsFilteredEmptyStateGlyph(filtered.symbolName)
             emptyStateAction = .clearFilters
-            addMediaButton.labelText = bookmarkFilterEnabled && currentSearchQuery.isEmpty ? "Show All Files" : "Clear Filters"
+            addMediaButton.labelText = filtered.actionTitle
             addMediaButton.setAccessibilityLabel(addMediaButton.labelText)
             addMediaButton.setAccessibilityHelp("Clear Queue search and bookmark filters")
             addMediaButton.setAccessibilityIdentifier("queue.empty.clearFilters")
@@ -1285,6 +1325,26 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
             scrollView.isHidden = false
         }
         layoutEmptyState()
+    }
+
+    /// Shows the neutral circle with `symbolName`, or the app icon when nil.
+    private func showsFilteredEmptyStateGlyph(_ symbolName: String?) {
+        let filtered = symbolName != nil
+        emptyStateLogoView.isHidden = filtered
+        emptyStateCircleView.isHidden = !filtered
+        emptyStateGlyphView.isHidden = !filtered
+        if let symbolName {
+            let configuration = NSImage.SymbolConfiguration(pointSize: QueueFilteredEmptyState.glyphSize, weight: .regular)
+            let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+            emptyStateGlyphView.image = image?.withSymbolConfiguration(configuration) ?? image
+        }
+        applyEmptyStateCircleAppearance()
+    }
+
+    private func applyEmptyStateCircleAppearance() {
+        emptyStateCircleView.layer?.backgroundColor = DWBColor.surfaceElevated.cgColor
+        emptyStateCircleView.layer?.borderColor = DWBAppearance.shared.border.cgColor
+        emptyStateGlyphView.contentTintColor = DWBAppearance.shared.textTertiary
     }
 
     // MARK: - Increase Contrast / appearance
@@ -1310,6 +1370,7 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         footerMoreButton.contentTintColor = appearance.textSecondary
         totalDurationLabel.textColor = appearance.textSecondary
         emptyStateDetailLabel.textColor = appearance.textTertiary
+        applyEmptyStateCircleAppearance()
         applySearchPlaceholder()
         updateBookmarkFilterButton()
         searchSortPill.needsDisplay = true
@@ -1638,6 +1699,18 @@ final class QueuePageTableView: NSTableView {
     /// Called when Delete or Backspace is pressed with one or more selected rows.
     /// Indices are sorted descending so the caller can remove them safely.
     var deleteRowsHandler: (([Int]) -> Void)?
+    /// Called when a drag over the table exits or ends, so the drop line can go.
+    var onDragEnded: (() -> Void)?
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        super.draggingExited(sender)
+        onDragEnded?()
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        super.draggingEnded(sender)
+        onDragEnded?()
+    }
 
     // Select on mouseDown so the highlight appears immediately, before drag detection
     // and before the action fires on mouseUp. Without this, selectionHighlightStyle = .none
@@ -1692,25 +1765,85 @@ extension QueuePageView: NSTableViewDataSource {
         return item
     }
 
+    /// The dragged row stays in the list at 0.4 alpha while its image follows the pointer.
+    func tableView(_ tableView: NSTableView,
+                   draggingSession session: NSDraggingSession,
+                   willBeginAt screenPoint: NSPoint,
+                   forRowIndexes rowIndexes: IndexSet) {
+        guard let row = rowIndexes.first else { return }
+        draggedVisibleRow = row
+        tableView.rowView(atRow: row, makeIfNecessary: false)?.alphaValue = QueueDropIndicatorMetrics.draggedRowAlpha
+    }
+
+    func tableView(_ tableView: NSTableView,
+                   draggingSession session: NSDraggingSession,
+                   endedAt screenPoint: NSPoint,
+                   operation: NSDragOperation) {
+        endDragFeedback()
+    }
+
     // MARK: Drop target — accept only same-table moves, inserting between rows
 
     func tableView(_ tableView: NSTableView,
                    validateDrop info: NSDraggingInfo,
                    proposedRow row: Int,
                    proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
-        guard allowsManualReorder else { return [] }
+        guard allowsManualReorder else {
+            hideDropIndicator()
+            return []
+        }
         // Only accept drops that insert between rows (not on top of a row)
         guard dropOperation == .above else {
             tableView.setDropRow(row, dropOperation: .above)
+            showDropIndicator(aboveVisibleRow: row)
             return .move
         }
+        showDropIndicator(aboveVisibleRow: row)
         return .move
+    }
+
+    // MARK: Drop line (9.7)
+
+    /// Puts the drop line in the gap above `row` (below the last row when `row` is the end).
+    private func showDropIndicator(aboveVisibleRow row: Int) {
+        guard visibleRows.count > 0 else { return hideDropIndicator() }
+        let boundaryY = row < visibleRows.count
+            ? tableView.rect(ofRow: row).minY
+            : tableView.rect(ofRow: visibleRows.count - 1).maxY
+        let pill = QueuePanelMetrics.pillRect(inRowBounds: NSRect(x: 0, y: 0, width: tableView.bounds.width,
+                                                                 height: QueuePanelMetrics.tableRowHeight),
+                                              visibleWidth: scrollView.contentView.bounds.width)
+        let inset = QueueDropIndicatorMetrics.sideInset
+        let diameter = QueueDropIndicatorMetrics.ringDiameter
+        dropIndicator.frame = NSRect(x: pill.minX + inset,
+                                     y: boundaryY - diameter / 2,
+                                     width: max(0, pill.width - inset * 2),
+                                     height: diameter)
+        dropIndicator.isHidden = false
+        dropIndicator.needsDisplay = true
+    }
+
+    private func hideDropIndicator() {
+        dropIndicator.isHidden = true
+    }
+
+    /// Ends the drop line and the dragged row's dimming.
+    fileprivate func endDragFeedback() {
+        hideDropIndicator()
+        if let row = draggedVisibleRow {
+            tableView.rowView(atRow: row, makeIfNecessary: false)?.alphaValue = 1
+        }
+        draggedVisibleRow = nil
+        for row in 0..<visibleRows.count {
+            tableView.rowView(atRow: row, makeIfNecessary: false)?.alphaValue = 1
+        }
     }
 
     func tableView(_ tableView: NSTableView,
                    acceptDrop info: NSDraggingInfo,
                    row: Int,
                    dropOperation: NSTableView.DropOperation) -> Bool {
+        hideDropIndicator()
         guard allowsManualReorder else { return false }
         guard let str = info.draggingPasteboard.string(forType: Self.draggedRowType),
               let from = Int(str) else { return false }
@@ -1771,7 +1904,7 @@ extension QueuePageView: NSTableViewDelegate {
             cell = QueuePageCell(reuseID: reuseID)
         }
 
-        cell?.configure(item: item, isCurrent: isCurrent)
+        cell?.configure(item: item, isCurrent: isCurrent, query: currentSearchQuery)
         return cell
     }
 
@@ -1870,10 +2003,12 @@ private final class QueuePageSectionCell: NSView {
 private final class QueuePageCell: NSView {
 
     private let leadingGlyph = NSImageView()
-    private let titleLabel = NSTextField(labelWithString: "")
+    private let titleLabel = QueueNameLabel()
+    private let tagView = QueuePlayNextTagView()
     private let metadataLabel = NSTextField(labelWithString: "")
     private let bookmarkIndicator = NSImageView()
     private var showsBookmark = false
+    private var showsTag = false
 
     init(reuseID: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -1884,14 +2019,16 @@ private final class QueuePageCell: NSView {
         leadingGlyph.setAccessibilityElement(false)
         addSubview(leadingGlyph)
 
-        for label in [titleLabel, metadataLabel] {
-            label.drawsBackground = false
-            label.isEditable = false
-            label.isBordered = false
-            label.lineBreakMode = .byTruncatingMiddle
-            label.setAccessibilityElement(false)
-            addSubview(label)
-        }
+        addSubview(titleLabel)
+        tagView.isHidden = true
+        addSubview(tagView)
+
+        metadataLabel.drawsBackground = false
+        metadataLabel.isEditable = false
+        metadataLabel.isBordered = false
+        metadataLabel.lineBreakMode = .byTruncatingMiddle
+        metadataLabel.setAccessibilityElement(false)
+        addSubview(metadataLabel)
 
         bookmarkIndicator.imageScaling = .scaleProportionallyDown
         bookmarkIndicator.setAccessibilityElement(false)
@@ -1921,16 +2058,28 @@ private final class QueuePageCell: NSView {
             ? bookmarkIndicator.frame.minX - QueuePanelMetrics.rowContentGap
             : pill.maxX - QueuePanelMetrics.rowTrailingPadding
         let textW = max(0, textRight - textX)
-        let titleH = ceil(titleLabel.intrinsicContentSize.height)
+        let titleH = titleLabel.lineHeight
         let metaH = ceil(metadataLabel.intrinsicContentSize.height)
         let blockH = titleH + QueuePanelMetrics.titleMetaGap + metaH
         let blockBottom = floor(bounds.midY - blockH / 2)
         metadataLabel.frame = NSRect(x: textX, y: blockBottom, width: textW, height: metaH)
-        titleLabel.frame = NSRect(x: textX, y: blockBottom + metaH + QueuePanelMetrics.titleMetaGap,
-                                  width: textW, height: titleH)
+        let titleY = blockBottom + metaH + QueuePanelMetrics.titleMetaGap
+        if showsTag {
+            // The Play Next tag follows the name; a long name shortens to leave it room.
+            let tagW = tagView.preferredWidth
+            let gap = QueuePanelMetrics.titleTagGap
+            let nameW = min(titleLabel.naturalWidth, max(0, textW - tagW - gap))
+            titleLabel.frame = NSRect(x: textX, y: titleY, width: nameW, height: titleH)
+            tagView.frame = NSRect(x: textX + nameW + gap,
+                                   y: titleY + floor((titleH - DWBMetrics.playNextTag) / 2),
+                                   width: tagW, height: DWBMetrics.playNextTag)
+        } else {
+            titleLabel.frame = NSRect(x: textX, y: titleY, width: textW, height: titleH)
+            tagView.frame = .zero
+        }
     }
 
-    func configure(item: QueuePageView.Item, isCurrent: Bool) {
+    func configure(item: QueuePageView.Item, isCurrent: Bool, query: String) {
         let appearance = DWBAppearance.shared
         let look = QueueRowAppearance.make(isCurrent: isCurrent,
                                            isSelected: false,
@@ -1938,31 +2087,25 @@ private final class QueuePageCell: NSView {
                                            isFailed: item.isFailed,
                                            isBookmarked: item.isBookmarked)
         let titleColor = look.filenameIsDimmed ? appearance.textSecondary : DWBColor.textPrimary
-        let baseFont = NSFont.systemFont(ofSize: 12.5, weight: look.filenameWeight)
         let text = item.displayName
-        let primaryPrefix = SettingsWindowController.customPrefixValue().trimmingCharacters(in: .whitespacesAndNewlines)
-        let secondaryPrefix = SettingsWindowController.customPrefixSecondaryValue().trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefixMatches: [(prefix: String, color: NSColor)] = [
-            (primaryPrefix, PlayerTheme.current.markerPrimary),
-            (secondaryPrefix, PlayerTheme.current.markerSecondary)
-        ]
-        .filter { !$0.prefix.isEmpty }
-        .sorted { $0.prefix.count > $1.prefix.count } // prefer longer match to avoid partial highlighting
-        if let matchedPrefix = prefixMatches.first(where: { text.hasPrefix($0.prefix) }) {
-            let attrStr = NSMutableAttributedString(string: text, attributes: [
-                .font: baseFont,
-                .foregroundColor: titleColor
-            ])
-            let prefixRange = NSRange(location: 0, length: (matchedPrefix.prefix as NSString).length)
-            attrStr.addAttributes([
-                .foregroundColor: matchedPrefix.color,
-                .font: NSFont.systemFont(ofSize: 12.5, weight: .bold)
-            ], range: prefixRange)
-            titleLabel.attributedStringValue = attrStr
+        titleLabel.attributedText = QueueNameStyle.attributedName(
+            text,
+            fontSize: 12.5,
+            weight: look.filenameWeight,
+            color: titleColor,
+            primaryPrefix: SettingsWindowController.customPrefixValue(),
+            secondaryPrefix: SettingsWindowController.customPrefixSecondaryValue(),
+            query: query
+        )
+
+        // The Play Next tag is hidden on the current row.
+        if let position = item.playNextPosition, !isCurrent {
+            tagView.configure(position: position)
+            tagView.isHidden = false
+            showsTag = true
         } else {
-            titleLabel.font = baseFont
-            titleLabel.textColor = titleColor
-            titleLabel.stringValue = text
+            tagView.isHidden = true
+            showsTag = false
         }
 
         metadataLabel.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
@@ -1998,6 +2141,7 @@ private final class QueuePageCell: NSView {
         needsLayout = true
         var states: [String] = [isCurrent ? "now playing" : "queued"]
         if item.isFailed { states.append("failed to play") }
+        if let position = item.playNextPosition, !isCurrent { states.append("play next \(position)") }
         setAccessibilityLabel(item.isBookmarked ? "\(text), bookmarked" : text)
         setAccessibilityValue(states.joined(separator: ", "))
     }

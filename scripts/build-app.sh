@@ -6,7 +6,8 @@ PROJECT_PATH="$ROOT_DIR/dwb/dwb.xcodeproj"
 SCHEME="${DWB_SCHEME:-dwb}"
 CONFIGURATION="${DWB_CONFIGURATION:-Release}"
 DESTINATION="${DWB_DESTINATION:-platform=macOS}"
-DERIVED_DATA_PATH="${DWB_DERIVED_DATA_PATH:-$ROOT_DIR/.tmp/derivedData}"
+DERIVED_DATA_PATH=""
+derived_data_args=()
 DIST_DIR="$ROOT_DIR/dist"
 DIST_APP_PATH="$DIST_DIR/dwb player.app"
 BUILD_INFO_PATH="$DIST_DIR/dwb-player-app-build-info.txt"
@@ -28,6 +29,58 @@ cleanup() {
     rm -f "$BUILD_SETTINGS_FILE"
 }
 trap cleanup EXIT
+
+xcode_derived_data_location() {
+    local location
+    location="$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null || true)"
+    [[ -n "$location" ]] || location="$HOME/Library/Developer/Xcode/DerivedData"
+    while [[ "$location" == */ && "$location" != "/" ]]; do
+        location="${location%/}"
+    done
+    printf "%s" "$location"
+}
+
+# Resolves the DerivedData folder Xcode uses for this project from its own settings.
+# build-app.sh deletes "$DERIVED_DATA_PATH/Build" when it finds stale VLCKit state, so refuse
+# anything that is not a dwb-* folder directly inside Xcode's DerivedData location.
+resolve_xcode_derived_data_path() {
+    local build_dir resolved location
+    build_dir="$(xcodebuild \
+        -project "$PROJECT_PATH" \
+        -scheme "$SCHEME" \
+        -configuration "$CONFIGURATION" \
+        -destination "$DESTINATION" \
+        -showBuildSettings | awk -F'= ' '/^[[:space:]]*BUILD_DIR = / { print $2; exit }')"
+    if [[ "$build_dir" != */Build/Products ]]; then
+        printf "ERROR: Unable to derive the DerivedData folder: BUILD_DIR is '%s', expected a path ending in /Build/Products.\n" "$build_dir" >&2
+        return 1
+    fi
+    resolved="${build_dir%/Build/Products}"
+    location="$(xcode_derived_data_location)"
+
+    if [[ -z "$resolved" || "$resolved" != /* || "$location" != /* || "$location" == "/" ]]; then
+        printf "ERROR: Refusing DerivedData path '%s' (location '%s'): both must be absolute and non-empty.\n" "$resolved" "$location" >&2
+        return 1
+    fi
+    case "$resolved/" in
+        */../*|*/./*|*//*)
+            printf "ERROR: Refusing DerivedData path '%s': it contains a relative or empty path segment.\n" "$resolved" >&2
+            return 1
+            ;;
+    esac
+    if [[ "${resolved%/*}" != "$location" || "${resolved##*/}" != dwb-?* ]]; then
+        printf "ERROR: Refusing DerivedData path '%s': it must be a dwb-* folder directly inside Xcode's DerivedData location '%s'.\n" "$resolved" "$location" >&2
+        return 1
+    fi
+    printf "%s" "$resolved"
+}
+
+if [[ -n "${DWB_DERIVED_DATA_PATH:-}" ]]; then
+    DERIVED_DATA_PATH="$DWB_DERIVED_DATA_PATH"
+    derived_data_args=(-derivedDataPath "$DERIVED_DATA_PATH")
+else
+    DERIVED_DATA_PATH="$(resolve_xcode_derived_data_path)" || exit 1
+fi
 
 mkdir -p "$DIST_DIR" "$CLANG_CACHE_PATH" "$SWIFT_CACHE_PATH" "$SWIFTPM_CACHE_PATH"
 rm -rf "$DIST_APP_PATH"
@@ -152,7 +205,7 @@ show_build_settings() {
         -scheme "$SCHEME" \
         -configuration "$CONFIGURATION" \
         -destination "$DESTINATION" \
-        -derivedDataPath "$DERIVED_DATA_PATH" \
+        ${derived_data_args[@]+"${derived_data_args[@]}"} \
         CODE_SIGNING_ALLOWED=NO \
         -showBuildSettings > "$BUILD_SETTINGS_FILE"
 }
@@ -200,7 +253,7 @@ build_standard() {
         -scheme "$SCHEME" \
         -configuration "$CONFIGURATION" \
         -destination "$DESTINATION" \
-        -derivedDataPath "$DERIVED_DATA_PATH" \
+        ${derived_data_args[@]+"${derived_data_args[@]}"} \
         -packageCachePath "$SWIFTPM_CACHE_PATH" \
         -onlyUsePackageVersionsFromResolvedFile \
         -resolvePackageDependencies
@@ -210,7 +263,7 @@ build_standard() {
         -scheme "$SCHEME" \
         -configuration "$CONFIGURATION" \
         -destination "$DESTINATION" \
-        -derivedDataPath "$DERIVED_DATA_PATH" \
+        ${derived_data_args[@]+"${derived_data_args[@]}"} \
         -packageCachePath "$SWIFTPM_CACHE_PATH" \
         CODE_SIGNING_ALLOWED=NO \
         CLANG_MODULE_CACHE_PATH="$CLANG_CACHE_PATH" \

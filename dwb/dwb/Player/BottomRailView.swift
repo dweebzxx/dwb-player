@@ -202,12 +202,10 @@ final class BottomRailView: NSView {
         let rewindTitle = SettingsWindowController.skipActionTitle(isForward: false, seconds: seconds)
         let forwardTitle = SettingsWindowController.skipActionTitle(isForward: true, seconds: seconds)
         rewindButton.configureSymbol(skipSymbolName(isForward: false, seconds: seconds),
-                                     pointSize: 13,
                                      accessibilityLabel: rewindTitle,
                                      help: rewindTitle,
                                      fallbackNames: ["gobackward"])
         forwardButton.configureSymbol(skipSymbolName(isForward: true, seconds: seconds),
-                                      pointSize: 13,
                                       accessibilityLabel: forwardTitle,
                                       help: forwardTitle,
                                       fallbackNames: ["goforward"])
@@ -217,7 +215,6 @@ final class BottomRailView: NSView {
         guard isFullscreenStyle != fullscreen else { return }
         isFullscreenStyle = fullscreen
         fullscreenButton.configureSymbol(fullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                                         pointSize: fullscreen ? 10 : 11,
                                          accessibilityLabel: "Toggle Fullscreen",
                                          help: "Toggle Fullscreen")
         needsLayout = true
@@ -255,7 +252,7 @@ final class BottomRailView: NSView {
         if playSymbol != cachedPlayPauseSymbol {
             cachedPlayPauseSymbol = playSymbol
             playPauseButton.configureSymbol(playSymbol,
-                                            pointSize: 15,
+                                            primary: true,
                                             accessibilityLabel: player.isPlaying ? "Pause" : "Play",
                                             help: "Play / Pause (Space)")
         }
@@ -281,7 +278,6 @@ final class BottomRailView: NSView {
             if volumeSymbol != cachedVolumeSymbol {
                 cachedVolumeSymbol = volumeSymbol
                 volumeButton.configureSymbol(volumeSymbol,
-                                             pointSize: 12,
                                              accessibilityLabel: "Mute or Unmute",
                                              help: "Mute / Unmute")
             }
@@ -311,7 +307,6 @@ final class BottomRailView: NSView {
         if repeatSymbol != cachedRepeatSymbol {
             cachedRepeatSymbol = repeatSymbol
             repeatButton.configureSymbol(repeatSymbol,
-                                         pointSize: 11,
                                          accessibilityLabel: "Repeat Current File",
                                          help: "Repeat current file")
         }
@@ -327,7 +322,7 @@ final class BottomRailView: NSView {
         bookmarkButton.isToggled = isBookmarked
         let symbol = isBookmarked ? "bookmark.fill" : "bookmark"
         let label = isBookmarked ? "Remove Bookmark" : "Bookmark"
-        bookmarkButton.configureSymbol(symbol, pointSize: 11,
+        bookmarkButton.configureSymbol(symbol,
                                        accessibilityLabel: label,
                                        help: "Bookmark (B)")
         bookmarkButton.setAccessibilityValue(isBookmarked ? "bookmarked" : "not bookmarked")
@@ -451,22 +446,22 @@ final class BottomRailView: NSView {
         hairline.wantsLayer = true
         addSubview(hairline)
 
-        configure(queueButton, symbol: "square.split.2x1", label: "Toggle Queue Page", help: "Toggle Queue Page", identifier: "player.rail.queue", action: #selector(queueTapped), style: .utility, size: 11)
+        configure(queueButton, symbol: "square.split.2x1", label: "Toggle Queue Page", help: "Toggle Queue Page", identifier: "player.rail.queue", action: #selector(queueTapped), style: .utility)
         updatePrefixButtonLabels()
-        configure(dPrefixButton, symbol: nil, label: "Apply Primary Custom Prefix", help: "Rename: apply primary custom prefix (N)", identifier: "player.rail.primaryPrefix", action: #selector(dPrefixTapped), style: .prefixPrimary, title: dPrefixButton.title, size: 11)
-        configure(secondaryPrefixButton, symbol: nil, label: "Apply Secondary Custom Prefix", help: "Rename: apply secondary custom prefix (M)", identifier: "player.rail.secondaryPrefix", action: #selector(secondaryPrefixTapped), style: .prefixSecondary, title: secondaryPrefixButton.title, size: 11)
-        configure(rewindButton, symbol: "gobackward.10", label: "Rewind", help: "Rewind", identifier: "player.rail.rewind", action: #selector(rewindTapped), size: 13)
-        configure(prevButton, symbol: "backward.end.fill", label: "Previous File", help: "Previous file (Z)", identifier: "player.rail.previous", action: #selector(prevTapped), size: 11)
-        configure(playPauseButton, symbol: "play.fill", label: "Play or Pause", help: "Play / Pause (Space)", identifier: "player.rail.playPause", action: #selector(playPauseTapped), style: .emphasized, size: 15)
-        configure(nextButton, symbol: "forward.end.fill", label: "Next File", help: "Next file (X)", identifier: "player.rail.next", action: #selector(nextTapped), size: 11)
-        configure(forwardButton, symbol: "goforward.10", label: "Skip Forward", help: "Skip Forward", identifier: "player.rail.forward", action: #selector(forwardTapped), size: 13)
-        configure(volumeButton, symbol: "speaker.wave.2.fill", label: "Mute or Unmute", help: "Mute / Unmute", identifier: "player.rail.volume", action: #selector(volumeTapped), size: 12)
-        configure(shuffleButton, symbol: "shuffle", label: "Shuffle", help: "Shuffle", identifier: "player.rail.shuffle", action: #selector(shuffleTapped), size: 11)
-        configure(repeatButton, symbol: "repeat", label: "Repeat Current File", help: "Repeat current file", identifier: "player.rail.repeatOne", action: #selector(repeatTapped), size: 11)
-        configure(bookmarkButton, symbol: "bookmark", label: "Bookmark", help: "Bookmark (B)", identifier: "player.rail.bookmark", action: #selector(bookmarkTapped), style: .bookmark, size: 11)
-        configure(moreButton, symbol: "ellipsis", label: "More Actions", help: "More actions overflow menu", identifier: "player.rail.more", action: #selector(moreTapped), size: 12)
-        configure(settingsButton, symbol: "gearshape", label: "Settings", help: "Settings (⌘,)", identifier: "player.rail.settings", action: #selector(settingsTapped), size: 11)
-        configure(fullscreenButton, symbol: "arrow.up.left.and.arrow.down.right", label: "Toggle Fullscreen", help: "Toggle Fullscreen", identifier: "player.rail.fullscreen", action: #selector(fullscreenTapped), size: 11)
+        configure(dPrefixButton, symbol: nil, label: "Apply Primary Custom Prefix", help: "Rename: apply primary custom prefix (N)", identifier: "player.rail.primaryPrefix", action: #selector(dPrefixTapped), style: .prefixPrimary, title: dPrefixButton.title)
+        configure(secondaryPrefixButton, symbol: nil, label: "Apply Secondary Custom Prefix", help: "Rename: apply secondary custom prefix (M)", identifier: "player.rail.secondaryPrefix", action: #selector(secondaryPrefixTapped), style: .prefixSecondary, title: secondaryPrefixButton.title)
+        configure(rewindButton, symbol: "gobackward.10", label: "Rewind", help: "Rewind", identifier: "player.rail.rewind", action: #selector(rewindTapped))
+        configure(prevButton, symbol: "backward.end.fill", label: "Previous File", help: "Previous file (Z)", identifier: "player.rail.previous", action: #selector(prevTapped))
+        configure(playPauseButton, symbol: "play.fill", label: "Play or Pause", help: "Play / Pause (Space)", identifier: "player.rail.playPause", action: #selector(playPauseTapped), style: .emphasized, primary: true)
+        configure(nextButton, symbol: "forward.end.fill", label: "Next File", help: "Next file (X)", identifier: "player.rail.next", action: #selector(nextTapped))
+        configure(forwardButton, symbol: "goforward.10", label: "Skip Forward", help: "Skip Forward", identifier: "player.rail.forward", action: #selector(forwardTapped))
+        configure(volumeButton, symbol: "speaker.wave.2.fill", label: "Mute or Unmute", help: "Mute / Unmute", identifier: "player.rail.volume", action: #selector(volumeTapped))
+        configure(shuffleButton, symbol: "shuffle", label: "Shuffle", help: "Shuffle", identifier: "player.rail.shuffle", action: #selector(shuffleTapped))
+        configure(repeatButton, symbol: "repeat", label: "Repeat Current File", help: "Repeat current file", identifier: "player.rail.repeatOne", action: #selector(repeatTapped))
+        configure(bookmarkButton, symbol: "bookmark", label: "Bookmark", help: "Bookmark (B)", identifier: "player.rail.bookmark", action: #selector(bookmarkTapped), style: .bookmark)
+        configure(moreButton, symbol: "ellipsis", label: "More Actions", help: "More actions overflow menu", identifier: "player.rail.more", action: #selector(moreTapped))
+        configure(settingsButton, symbol: "gearshape", label: "Settings", help: "Settings (⌘,)", identifier: "player.rail.settings", action: #selector(settingsTapped))
+        configure(fullscreenButton, symbol: "arrow.up.left.and.arrow.down.right", label: "Toggle Fullscreen", help: "Toggle Fullscreen", identifier: "player.rail.fullscreen", action: #selector(fullscreenTapped))
 
         for label in [elapsedLabel, remainingLabel] {
             label.font = .monospacedDigitSystemFont(ofSize: RailMetrics.timeLabelFontSize, weight: .medium)
@@ -536,14 +531,14 @@ final class BottomRailView: NSView {
                            action: Selector,
                            style: RailButton.Style = .normal,
                            title: String = "",
-                           size: CGFloat = 11) {
+                           primary: Bool = false) {
         button.railStyle = style
         button.target = self
         button.action = action
         button.setAccessibilityIdentifier(identifier)
         button.title = title
         if let symbol {
-            button.configureSymbol(symbol, pointSize: size, accessibilityLabel: label, help: help)
+            button.configureSymbol(symbol, primary: primary, accessibilityLabel: label, help: help)
         } else {
             button.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
             button.setAccessibilityLabel(label)
@@ -600,7 +595,7 @@ final class BottomRailView: NSView {
         if playSymbol != cachedPlayPauseSymbol {
             cachedPlayPauseSymbol = playSymbol
             playPauseButton.configureSymbol(playSymbol,
-                                            pointSize: 15,
+                                            primary: true,
                                             accessibilityLabel: imageModeIsPlaying ? "Pause \(mediaKind)" : "Resume \(mediaKind)",
                                             help: "Play / Pause (Space)")
         }
@@ -640,7 +635,6 @@ final class BottomRailView: NSView {
         if repeatSymbol != cachedRepeatSymbol {
             cachedRepeatSymbol = repeatSymbol
             repeatButton.configureSymbol(repeatSymbol,
-                                         pointSize: 11,
                                          accessibilityLabel: "Repeat Current File",
                                          help: "Repeat current file")
         }
@@ -671,7 +665,7 @@ final class BottomRailView: NSView {
             symbol = "shuffle"
         }
         if shuffleButton.toolTip != help {
-            shuffleButton.configureSymbol(symbol, pointSize: 11, accessibilityLabel: label, help: help)
+            shuffleButton.configureSymbol(symbol, accessibilityLabel: label, help: help)
         }
         let state = endlessOn ? "Endless Shuffle on" : shuffleOn ? "Shuffle on" : "Shuffle off"
         shuffleButton.setAccessibilityValue(state)

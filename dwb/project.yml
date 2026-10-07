@@ -68,6 +68,8 @@ targets:
       - path: dwb/Player/QueuePanelModels.swift
       - path: dwb/App/ShortcutsModel.swift
       - path: dwb/App/SettingsPagesModel.swift
+      - path: dwb/Player/ScaleMode.swift
+      - path: dwb/Player/RenameSheetModels.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: "YES"

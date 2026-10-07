@@ -103,12 +103,74 @@ enum AudioSyncHUDModel {
 // MARK: - HUD stack
 
 /// The volume HUD, with the audio sync HUD directly above it, sits above the
-/// undo toast so the three never overlap.
+/// undo toast so the three never overlap. The status HUD takes the volume HUD's slot.
 enum HUDStackMetrics {
-    /// Distance from the top of the rail to the bottom of the volume HUD
-    /// (the toast's 24 pt offset plus its 40 pt height).
-    static let bottomOffsetAboveRail: CGFloat = UndoToastMetrics.bottomInset - DWBMetrics.railHeight + UndoToastMetrics.height
+    /// Distance from the top of the rail to the bottom of the volume HUD and the status HUD:
+    /// `DWBMetrics.hudBottomOffset` above the stage bottom, which is the toast's 24 pt
+    /// offset plus its 40 pt height above the 68 pt rail.
+    static let bottomOffsetAboveRail: CGFloat = DWBMetrics.hudBottomOffset - DWBMetrics.railHeight
     static let gap: CGFloat = 8
+}
+
+// MARK: - Status HUD
+
+/// What the non-modal status HUD says (`tokens-and-specs.md` 9.4). Pure so the copy, the
+/// symbols and the hold times can be tested.
+struct StatusHUDContent: Equatable {
+    enum Tone: Equatable { case neutral, caution }
+
+    let symbol: String
+    let title: String
+    let detail: String?
+    let tone: Tone
+    let hold: TimeInterval
+
+    /// Fit / Fill / Stretch: the mode name, with its shortcut as the detail.
+    static func scale(_ mode: ScaleMode) -> StatusHUDContent {
+        switch mode {
+        case .fit:
+            return StatusHUDContent(symbol: "rectangle.arrowtriangle.2.inward", title: "Fit",
+                                    detail: "\u{2318}1", tone: .neutral, hold: DWBMotion.scaleHUDHold)
+        case .fill:
+            return StatusHUDContent(symbol: "rectangle.arrowtriangle.2.outward", title: "Fill",
+                                    detail: "\u{2318}2", tone: .neutral, hold: DWBMotion.scaleHUDHold)
+        case .stretch:
+            return StatusHUDContent(symbol: "arrow.left.and.right", title: "Stretch",
+                                    detail: "\u{2318}3", tone: .neutral, hold: DWBMotion.scaleHUDHold)
+        }
+    }
+
+    static func windowLimit(maxWindows: Int) -> StatusHUDContent {
+        StatusHUDContent(symbol: "macwindow", title: "Window limit reached",
+                         detail: "dwb player supports up to \(maxWindows) player windows.",
+                         tone: .caution, hold: DWBMotion.windowLimitHold)
+    }
+
+    /// What VoiceOver speaks: the title, then the detail.
+    var spokenText: String {
+        guard let detail, !detail.isEmpty else { return title }
+        return "\(title). \(detail)"
+    }
+}
+
+enum StatusHUDMetrics {
+    static let minHeight: CGFloat = DWBMetrics.statusHUDMinHeight
+    static let maxWidth: CGFloat = 420
+    static let topPadding: CGFloat = 8
+    static let bottomPadding: CGFloat = 8
+    static let leadingPadding: CGFloat = 14
+    static let trailingPadding: CGFloat = 18
+    static let iconSize: CGFloat = 16
+    static let iconGap: CGFloat = 10
+    static let lineGap: CGFloat = 1
+    static let titleFontSize: CGFloat = 13
+    static let detailFontSize: CGFloat = 11
+
+    /// At least `minHeight`; grows when the two text lines plus padding need more.
+    static func height(titleHeight: CGFloat, detailHeight: CGFloat) -> CGFloat {
+        let lines = titleHeight + (detailHeight > 0 ? lineGap + detailHeight : 0)
+        return max(minHeight, topPadding + lines + bottomPadding)
+    }
 }
 
 // MARK: - Title overlay
@@ -164,8 +226,26 @@ enum UndoToastMetrics {
     /// (the 68 pt rail plus 24 pt).
     static let bottomInset: CGFloat = DWBMetrics.railHeight + 24
 
-    /// A toast is shown only for a marker rename of exactly one file.
-    static func shouldShow(forRenamedFileCount count: Int) -> Bool { count == 1 }
+    /// A toast is shown for any marker rename: the one-file form names the file, the batch
+    /// form (two or more) gives only the count.
+    static func shouldShow(forRenamedFileCount count: Int) -> Bool { count >= 1 }
+
+    static func isBatch(renamedFileCount count: Int) -> Bool { count > 1 }
+
+    /// Caption before the count or filename: "Renamed to <name>" / "Renamed <N files>".
+    static func caption(renamedFileCount count: Int) -> String {
+        isBatch(renamedFileCount: count) ? "Renamed" : "Renamed to"
+    }
+
+    /// The semibold count: "N files". Never lists names.
+    static func batchCountText(_ count: Int) -> String { "\(count) files" }
+
+    static func spokenText(renamedFileCount count: Int, filename: String?) -> String {
+        if isBatch(renamedFileCount: count) {
+            return "Renamed \(count) files. Undo with Command Z."
+        }
+        return "Renamed to \(filename ?? ""). Undo with Command Z."
+    }
 }
 
 /// Finds the marker prefix a filename starts with, preferring the longer prefix
