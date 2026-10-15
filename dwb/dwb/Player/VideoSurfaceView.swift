@@ -143,12 +143,13 @@ class VideoSurfaceView: NSView {
                 case ".":
                     if !event.isARepeat { wc.playNext() }
                     return
-                case "n":
-                    if !event.isARepeat { wc.performCustomPrefixRenameCurrentItem(source: "videoPage-N") }
-                    return
-                case "m":
-                    if !event.isARepeat { wc.performSecondaryCustomPrefixRenameCurrentItem(source: "videoPage-M") }
-                    return
+                case "n", "m", "r":
+                    if let action = PrefixKeyRouting.action(forCharacters: chars,
+                                                            hasModifiers: false,
+                                                            isEditingText: window?.firstResponder is NSText) {
+                        if !event.isARepeat { wc.performPrefixAction(action, source: "videoPage-\(chars)") }
+                        return
+                    }
                 case "b":
                     if !event.isARepeat { wc.toggleBookmark() }
                     return
@@ -289,24 +290,83 @@ final class ImageSurfaceView: NSImageView {
     override var acceptsFirstResponder: Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        // The video surface is hidden while an image shows, so a click here must take
+        // focus or the keys below never arrive.
+        window?.makeFirstResponder(self)
         if event.clickCount == 2 {
             window?.toggleFullScreen(nil)
         }
         super.mouseDown(with: event)
     }
 
+    /// The same keys as `VideoSurfaceView.keyDown`, so an image or GIF on screen answers
+    /// the keyboard like a video. Arrows step once per press: the hold-to-seek timer is
+    /// video-only.
     override func keyDown(with event: NSEvent) {
         guard let wc = window?.windowController as? PlayerWindowController else {
             super.keyDown(with: event)
             return
         }
-        let noMods = event.modifierFlags
-            .intersection([.command, .option, .control, .shift]).isEmpty
-        if noMods, let chars = event.charactersIgnoringModifiers, chars == "b" {
-            if !event.isARepeat { wc.toggleBookmark() }
-            return
+        wc.noteChromeActivity()
+        switch event.keyCode {
+        case 49:   // Space
+            if !event.isARepeat { wc.togglePlayPause() }
+        case 123:  // Left Arrow
+            if !event.isARepeat { wc.skipBackward10() }
+        case 124:  // Right Arrow
+            if !event.isARepeat { wc.skipForward10() }
+        case 125:  // Down Arrow
+            wc.volumeDown()
+        case 126:  // Up Arrow
+            wc.volumeUp()
+        default:
+            let noMods = event.modifierFlags
+                .intersection([.command, .option, .control, .shift]).isEmpty
+            if noMods, let chars = event.charactersIgnoringModifiers {
+                switch chars {
+                case "1":
+                    SettingsWindowController.setSkipDuration(10)
+                    return
+                case "3":
+                    SettingsWindowController.setSkipDuration(30)
+                    return
+                case "6":
+                    SettingsWindowController.setSkipDuration(60)
+                    return
+                case "9":
+                    SettingsWindowController.setSkipDuration(180)
+                    return
+                case ",":
+                    if !event.isARepeat { wc.playPrevious() }
+                    return
+                case ".":
+                    if !event.isARepeat { wc.playNext() }
+                    return
+                case "n", "m", "r":
+                    if let action = PrefixKeyRouting.action(forCharacters: chars,
+                                                            hasModifiers: false,
+                                                            isEditingText: window?.firstResponder is NSText) {
+                        if !event.isARepeat { wc.performPrefixAction(action, source: "imagePage-\(chars)") }
+                        return
+                    }
+                case "b":
+                    if !event.isARepeat { wc.toggleBookmark() }
+                    return
+                case "[":
+                    wc.decreaseAudioDelay()
+                    return
+                case "]":
+                    wc.increaseAudioDelay()
+                    return
+                case "\\":
+                    if !event.isARepeat { wc.resetAudioDelay() }
+                    return
+                default:
+                    break
+                }
+            }
+            super.keyDown(with: event)
         }
-        super.keyDown(with: event)
     }
 
     private func setDragHighlight(_ on: Bool, sender: NSDraggingInfo? = nil) {

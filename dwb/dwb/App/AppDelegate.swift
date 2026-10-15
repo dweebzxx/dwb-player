@@ -28,8 +28,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         DebugConsoleController.log("app", "terminating")
     }
 
+    /// Closing the last player window leaves the app running in the Dock (D-003, P136).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true
+        return false
     }
 
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -52,20 +53,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let visiblePlayerWindows = windowControllers.compactMap { wc -> NSWindow? in
-            guard let window = wc.window, window.isVisible else { return nil }
-            return window
+        pruneClosedPlayerWindowControllers()
+        // After Command-H every window reads as not visible. Unhiding brings the
+        // existing windows back, so a hidden window still counts as on screen here.
+        let appWasHidden = sender.isHidden
+        if appWasHidden {
+            sender.unhide(nil)
+        }
+        let snapshots = windowControllers.map { $0.targetingSnapshot(treatHiddenAsOnScreen: appWasHidden) }
+        let choice = PlayerWindowTargeting.reopenChoice(windows: snapshots)
+        let controller: (ObjectIdentifier) -> PlayerWindowController? = { id in
+            self.windowControllers.first { ObjectIdentifier($0) == id }
         }
 
-        if visiblePlayerWindows.isEmpty {
+        switch choice {
+        case .bringForward(let id):
+            controller(id)?.window?.makeKeyAndOrderFront(nil)
+        case .restoreMinimized(let id):
+            controller(id)?.window?.deminiaturize(nil)
+            controller(id)?.window?.makeKeyAndOrderFront(nil)
+        case .openNewWindow:
             _ = openNewPlayerWindow()
-        } else {
-            visiblePlayerWindows.forEach { $0.deminiaturize(nil) }
-            visiblePlayerWindows.last?.makeKeyAndOrderFront(nil)
         }
+        DebugConsoleController.log("window", "dockReopen: choice=\(Self.reopenChoiceDescription(choice)) hidden=\(appWasHidden) windows=\(windowControllers.count)")
 
         sender.activate(ignoringOtherApps: true)
         return false
+    }
+
+    private static func reopenChoiceDescription(_ choice: PlayerWindowTargeting.ReopenChoice<ObjectIdentifier>) -> String {
+        switch choice {
+        case .bringForward: return "bring-forward"
+        case .restoreMinimized: return "restore-minimized"
+        case .openNewWindow: return "new-window"
+        }
     }
 
     // MARK: - Window management
@@ -401,10 +422,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
             return result.isEnabled
         }
 
+        // With no usable player window these commands have nothing to act on.
+        if controller == nil, let action = menuItem.action, Self.playerWindowOnlyActions.contains(action) {
+            return false
+        }
+
         switch menuItem.tag {
         case 50:
             let canUndoMarkerRename = controller?.canUndoMarkerRename == true
-            menuItem.title = canUndoMarkerRename ? "Undo Marker Rename" : "Undo"
+            menuItem.title = canUndoMarkerRename ? "Undo Prefix Change" : "Undo"
             return canUndoMarkerRename || (activeTextEditor()?.undoManager?.canUndo == true)
         case 1:
             menuItem.state = frontPlayerWindowController?.scaleMode == .fit     ? .on : .off
@@ -434,6 +460,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         let sign = ms > 0 ? "+" : ""
         audioSyncStatusMenuItem?.title = "Offset: \(sign)\(ms) ms"
     }
+
+    private static let playerWindowOnlyActions: Set<Selector> = [
+        #selector(playPause(_:)),
+        #selector(stop(_:)),
+        #selector(rewind10(_:)),
+        #selector(forward10(_:)),
+        #selector(volumeUp(_:)),
+        #selector(volumeDown(_:)),
+        #selector(advanceAudio(_:)),
+        #selector(delayAudio(_:)),
+        #selector(setScaleFit(_:)),
+        #selector(setScaleFill(_:)),
+        #selector(setScaleStretch(_:)),
+        #selector(toggleKeepAtTop(_:))
+    ]
 
     private var frontPlayerWindowController: PlayerWindowController? {
         return usablePlayerWindowController()
@@ -491,20 +532,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
                         action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
 
-        // ── Edit menu ───────────────────────────────────────────────────────
-        let editItem = NSMenuItem()
-        mainMenu.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit")
-        editItem.submenu = editMenu
-
-        let undoItem = NSMenuItem(title: "Undo",
-                                  action: #selector(undoMarkerRename(_:)),
-                                  keyEquivalent: "z")
-        undoItem.keyEquivalentModifierMask = .command
-        undoItem.target = self
-        undoItem.tag = 50
-        editMenu.addItem(undoItem)
-
         // ── File menu ───────────────────────────────────────────────────────
         let fileItem = NSMenuItem()
         mainMenu.addItem(fileItem)
@@ -558,6 +585,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
                                        keyEquivalent: "n")
         newWindowItem.target = self
         fileMenu.addItem(newWindowItem)
+
+        // ── Edit menu ───────────────────────────────────────────────────────
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+
+        let undoItem = NSMenuItem(title: "Undo",
+                                  action: #selector(undoMarkerRename(_:)),
+                                  keyEquivalent: "z")
+        undoItem.keyEquivalentModifierMask = .command
+        undoItem.target = self
+        undoItem.tag = 50
+        editMenu.addItem(undoItem)
+
+        editMenu.addItem(.separator())
+
+        // Standard responder-chain items: nil target, so AppKit sends them to the first
+        // responder (a text field's editor) and enables them only when it can handle them.
+        let copyItem = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        copyItem.keyEquivalentModifierMask = .command
+        editMenu.addItem(copyItem)
+
+        let pasteItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        pasteItem.keyEquivalentModifierMask = .command
+        editMenu.addItem(pasteItem)
+
+        let selectAllItem = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        selectAllItem.keyEquivalentModifierMask = .command
+        editMenu.addItem(selectAllItem)
 
         // ── Playback menu ───────────────────────────────────────────────────
         let playbackItem = NSMenuItem()

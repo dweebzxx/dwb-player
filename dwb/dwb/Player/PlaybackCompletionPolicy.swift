@@ -100,6 +100,56 @@ enum ExplicitPlayPauseCompletionPolicy {
     }
 }
 
+/// Stall clock for the mid-playback stall watchdog: VLC keeps reporting "playing"
+/// but time and position have not moved. Samples are fed only while the player
+/// reports playing, so the clock must be told when playback pauses; otherwise the
+/// first sample after a resume would be measured against the last frame before
+/// the pause.
+struct MidPlaybackStallClock: Equatable {
+    private var lastTimeMs = -1
+    private var lastPosition: Float = -1
+    private var lastAdvanceMT: TimeInterval = 0
+
+    /// Forgets the baseline so the next sample starts a fresh clock.
+    mutating func reset() {
+        lastTimeMs = -1
+        lastPosition = -1
+        lastAdvanceMT = 0
+    }
+
+    /// The player stopped reporting playing (a pause). The next playing sample
+    /// starts a new clock instead of continuing the one from before the pause.
+    mutating func playbackPaused() {
+        reset()
+    }
+
+    /// Records one sample taken while playing. Returns how long time and position
+    /// have been unchanged once that reaches `toleranceSeconds`, otherwise nil.
+    mutating func stalledSeconds(timeMs: Int,
+                                 position: Float,
+                                 nowMT: TimeInterval,
+                                 toleranceSeconds: TimeInterval) -> TimeInterval? {
+        let advanced = lastTimeMs < 0
+            || timeMs != lastTimeMs
+            || (position.isFinite && lastPosition.isFinite && position != lastPosition)
+
+        if advanced {
+            lastPosition = position
+            lastTimeMs = timeMs
+            lastAdvanceMT = nowMT
+            return nil
+        }
+
+        guard lastAdvanceMT > 0 else {
+            lastAdvanceMT = nowMT
+            return nil
+        }
+
+        let stalledFor = nowMT - lastAdvanceMT
+        return stalledFor >= toleranceSeconds ? stalledFor : nil
+    }
+}
+
 struct PlaybackCompletionPolicy {
     let isRepeatOne: Bool
     let currentDisplayIndex: Int

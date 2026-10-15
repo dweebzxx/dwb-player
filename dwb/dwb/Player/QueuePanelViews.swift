@@ -47,7 +47,9 @@ class QueueChromeButton: NSButton {
 
     override func layout() {
         super.layout()
-        layer?.cornerRadius = min(cornerRadius, bounds.height / 2)
+        // Not clamped to half the height: a chip's highlight must take the same radius token as
+        // the group outline.
+        layer?.cornerRadius = cornerRadius
     }
 
     override func updateTrackingAreas() {
@@ -202,20 +204,19 @@ final class QueuePillButton: QueueChromeButton {
     }
 }
 
-// MARK: - Marker chip (N / M)
+// MARK: - Marker chip (primary / secondary prefix)
 
 final class QueueMarkerChipButton: QueueChromeButton {
     let kind: QueueMarkerChipState.Kind
     private(set) var chipState: QueueMarkerChipState
 
     private static let labelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-    private static let tagFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
 
     init(kind: QueueMarkerChipState.Kind) {
         self.kind = kind
-        self.chipState = QueueMarkerChipState(kind: kind, label: "—", isBlank: true, isApplied: false, isEnabled: false)
+        self.chipState = QueueMarkerChipState(kind: kind, prefix: "", label: "—", isBlank: true, isApplied: false, isEnabled: false)
         super.init(frame: .zero)
-        cornerRadius = DWBMetrics.radiusControl
+        cornerRadius = QueuePanelMetrics.markerHighlightCornerRadius
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -227,7 +228,9 @@ final class QueueMarkerChipButton: QueueChromeButton {
     func apply(_ state: QueueMarkerChipState) {
         chipState = state
         isEnabled = state.isEnabled
-        setAccessibilityValue(state.isApplied ? "applied" : (state.isBlank ? "no prefix set" : "not applied"))
+        toolTip = state.tooltip
+        setAccessibilityLabel(state.accessibilityLabel)
+        setAccessibilityValue(state.accessibilityValue)
         restyle()
         needsDisplay = true
         invalidateIntrinsicContentSize()
@@ -249,17 +252,12 @@ final class QueueMarkerChipButton: QueueChromeButton {
         chipState.isBlank || !chipState.isEnabled ? DWBColor.textDisabled : markerColor
     }
 
-    private var tagTextSize: NSSize {
-        (chipState.keyTag as NSString).size(withAttributes: [.font: Self.tagFont])
-    }
-
-    private var tagWidth: CGFloat { ceil(tagTextSize.width) + 8 }
     private var labelWidth: CGFloat {
         ceil((chipState.label as NSString).size(withAttributes: [.font: Self.labelFont]).width)
     }
 
     func preferredWidth() -> CGFloat {
-        8 + labelWidth + 6 + tagWidth + 8
+        8 + labelWidth + 8
     }
 
     override var intrinsicContentSize: NSSize {
@@ -269,27 +267,9 @@ final class QueueMarkerChipButton: QueueChromeButton {
     override func draw(_ dirtyRect: NSRect) {
         let labelAttributes: [NSAttributedString.Key: Any] = [.font: Self.labelFont, .foregroundColor: labelColor]
         let labelSize = (chipState.label as NSString).size(withAttributes: labelAttributes)
-        let labelOrigin = NSPoint(x: 8, y: floor((bounds.height - labelSize.height) / 2))
+        let labelOrigin = NSPoint(x: floor((bounds.width - labelSize.width) / 2),
+                                  y: floor((bounds.height - labelSize.height) / 2))
         (chipState.label as NSString).draw(at: labelOrigin, withAttributes: labelAttributes)
-
-        let tagHeight: CGFloat = 14
-        let tagRect = NSRect(x: labelOrigin.x + ceil(labelSize.width) + 6,
-                             y: floor((bounds.height - tagHeight) / 2),
-                             width: tagWidth,
-                             height: tagHeight)
-        let tagEdge = chipState.isEnabled ? DWBAppearance.shared.border : DWBAppearance.shared.border.withAlphaComponent(0.6)
-        let path = NSBezierPath(roundedRect: tagRect.insetBy(dx: 0.5, dy: 0.5),
-                                xRadius: DWBMetrics.radiusTag, yRadius: DWBMetrics.radiusTag)
-        path.lineWidth = 1
-        tagEdge.setStroke()
-        path.stroke()
-        let tagAttributes: [NSAttributedString.Key: Any] = [
-            .font: Self.tagFont,
-            .foregroundColor: chipState.isEnabled ? DWBAppearance.shared.textTertiary : DWBColor.textDisabled
-        ]
-        let tagTextOrigin = NSPoint(x: tagRect.minX + (tagRect.width - tagTextSize.width) / 2,
-                                    y: tagRect.minY + (tagRect.height - tagTextSize.height) / 2)
-        (chipState.keyTag as NSString).draw(at: tagTextOrigin, withAttributes: tagAttributes)
     }
 }
 
@@ -300,11 +280,11 @@ final class QueueUndoButton: QueueChromeButton {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        cornerRadius = DWBMetrics.radiusControl
-        setAccessibilityLabel("Undo last marker rename, Command-Z")
-        setAccessibilityHelp("Restores the filenames changed by the most recent marker rename in this window")
+        cornerRadius = QueuePanelMetrics.markerHighlightCornerRadius
+        setAccessibilityLabel("Undo last prefix change")
+        setAccessibilityHelp("Restores the filenames changed by the most recent prefix change in this window")
         setAccessibilityIdentifier("queue.footer.undoMarkerRename")
-        toolTip = "Undo Marker Rename (⌘Z)"
+        toolTip = "Undo the last prefix change (⌘Z)"
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -337,18 +317,18 @@ final class QueueUndoButton: QueueChromeButton {
             text.append(NSAttributedString(attachment: attachment))
         }
         text.append(NSAttributedString(string: " Undo", attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .font: Self.wordFont,
             .foregroundColor: color
-        ]))
-        text.append(NSAttributedString(string: " ⌘Z", attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular),
-            .foregroundColor: isEnabled ? DWBAppearance.shared.textTertiary : DWBColor.textDisabled
         ]))
         attributedTitle = text
     }
 
+    private static let wordFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
+
     func preferredWidth() -> CGFloat {
-        isCompact ? 28 : 8 + 12 + 5 + 30 + 5 + 18 + 8
+        if isCompact { return 28 }
+        let wordWidth = ceil((" Undo" as NSString).size(withAttributes: [.font: Self.wordFont]).width)
+        return 8 + 12 + wordWidth + 8
     }
 
     override var intrinsicContentSize: NSSize {
@@ -385,7 +365,7 @@ final class QueueMarkerChipGroupView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = DWBMetrics.radiusPill
+        layer?.cornerRadius = QueuePanelMetrics.markerGroupCornerRadius
         layer?.borderWidth = 1
         setAccessibilityRole(.group)
         setAccessibilityLabel("File markers")

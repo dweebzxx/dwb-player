@@ -148,29 +148,9 @@ final class BottomRailView: NSView {
         applyVisibilitySettings()
     }
 
-    fileprivate static func trimmedPrefix(_ prefix: String) -> String {
-        prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    fileprivate static func railPrefixLabel(_ prefix: String) -> String {
-        let trimmed = trimmedPrefix(prefix)
-        guard let first = trimmed.first else { return "" }
-        return "\(first)_"
-    }
-
-    private static func hasConfiguredPrefix(_ prefix: String) -> Bool {
-        !trimmedPrefix(prefix).isEmpty
-    }
-
-    private static func hasDistinctSecondaryPrefix(primary: String, secondary: String) -> Bool {
-        let primaryTrimmed = trimmedPrefix(primary)
-        let secondaryTrimmed = trimmedPrefix(secondary)
-        return !secondaryTrimmed.isEmpty && secondaryTrimmed != primaryTrimmed
-    }
-
     private func updatePrefixButtonLabels() {
-        dPrefixButton.title = BottomRailView.railPrefixLabel(SettingsWindowController.customPrefixValue())
-        secondaryPrefixButton.title = BottomRailView.railPrefixLabel(SettingsWindowController.customPrefixSecondaryValue())
+        dPrefixButton.title = RailPrefixButtons.label(forPrefix: SettingsWindowController.customPrefixValue())
+        secondaryPrefixButton.title = RailPrefixButtons.label(forPrefix: SettingsWindowController.customPrefixSecondaryValue())
     }
 
     func applyVisibilitySettings() {
@@ -178,8 +158,8 @@ final class BottomRailView: NSView {
         let primary = SettingsWindowController.customPrefixValue()
         let secondary = SettingsWindowController.customPrefixSecondaryValue()
         let showPrefixButtons = SettingsWindowController.isBottomRailShowXEnabled()
-        dPrefixButton.isHidden         = !showPrefixButtons || !BottomRailView.hasConfiguredPrefix(primary)
-        secondaryPrefixButton.isHidden = !showPrefixButtons || !BottomRailView.hasDistinctSecondaryPrefix(primary: primary, secondary: secondary)
+        dPrefixButton.isHidden         = !RailPrefixButtons.showsPrimary(primary: primary, prefixButtonsEnabled: showPrefixButtons)
+        secondaryPrefixButton.isHidden = !RailPrefixButtons.showsSecondary(primary: primary, secondary: secondary, prefixButtonsEnabled: showPrefixButtons)
         shuffleButton.isHidden         = !SettingsWindowController.isBottomRailShowShuffleEnabled()
         repeatButton.isHidden          = !SettingsWindowController.isBottomRailShowReplayEnabled()
         volumeButton.isHidden          = !SettingsWindowController.isBottomRailShowVolumeEnabled()
@@ -417,11 +397,9 @@ final class BottomRailView: NSView {
         let primary = SettingsWindowController.customPrefixValue()
         let secondary = SettingsWindowController.customPrefixSecondaryValue()
         let showPrefixButtons = SettingsWindowController.isBottomRailShowXEnabled()
-        dPrefixButton.isHidden = !showPrefixButtons
-            || !BottomRailView.hasConfiguredPrefix(primary)
+        dPrefixButton.isHidden = !RailPrefixButtons.showsPrimary(primary: primary, prefixButtonsEnabled: showPrefixButtons)
             || width < 500
-        secondaryPrefixButton.isHidden = !showPrefixButtons
-            || !BottomRailView.hasDistinctSecondaryPrefix(primary: primary, secondary: secondary)
+        secondaryPrefixButton.isHidden = !RailPrefixButtons.showsSecondary(primary: primary, secondary: secondary, prefixButtonsEnabled: showPrefixButtons)
             || width < 540
         elapsedLabel.isHidden    = width < 640
         remainingLabel.isHidden  = true   // combined time shown in elapsedLabel; always hidden
@@ -708,8 +686,8 @@ final class BottomRailView: NSView {
     }
 
     @objc private func queueTapped() { controller?.toggleQueuePage() }
-    @objc private func dPrefixTapped() { controller?.performCustomPrefixRenameCurrentItem() }
-    @objc private func secondaryPrefixTapped() { controller?.performSecondaryCustomPrefixRenameCurrentItem(source: "bottomRail-secondary") }
+    @objc private func dPrefixTapped() { controller?.performPrefixAction(.primaryPrefix, source: "bottomRail") }
+    @objc private func secondaryPrefixTapped() { controller?.performPrefixAction(.secondaryPrefix, source: "bottomRail-secondary") }
     @objc private func playPauseTapped() { controller?.togglePlayPause() }
     @objc private func prevTapped() { controller?.playPrevious() }
     @objc private func nextTapped() { controller?.playNext() }
@@ -732,14 +710,19 @@ final class BottomRailView: NSView {
         let primary = SettingsWindowController.customPrefixValue()
         let secondary = SettingsWindowController.customPrefixSecondaryValue()
         let showPrefixButtons = SettingsWindowController.isBottomRailShowXEnabled()
-        let hasPrimary = BottomRailView.hasConfiguredPrefix(primary)
-        let hasDistinctSecondary = BottomRailView.hasDistinctSecondaryPrefix(primary: primary, secondary: secondary)
+        let showsPrimaryItem = RailPrefixButtons.showsInMoreMenu(.primary, primary: primary, secondary: secondary,
+                                                                 prefixButtonsEnabled: showPrefixButtons,
+                                                                 buttonIsHidden: dPrefixButton.isHidden)
+        let showsSecondaryItem = RailPrefixButtons.showsInMoreMenu(.secondary, primary: primary, secondary: secondary,
+                                                                   prefixButtonsEnabled: showPrefixButtons,
+                                                                   buttonIsHidden: secondaryPrefixButton.isHidden)
 
         // Use NSMenu so overflow actions are natively accessible to VoiceOver and
         // keyboard-only users. NSMenuItem exposes role, label, state, and activation
         // through AppKit's built-in accessibility and keyboard navigation automatically.
-        // Show each action when its dedicated rail button is hidden (Settings off or
-        // narrow-width responsive hiding). Visible rail buttons are not duplicated.
+        // Prefix items show only when "Prefix buttons" is on and the rail button is hidden
+        // for lack of width; with the setting off the menu has none. The other actions show
+        // when their dedicated rail button is hidden. Visible rail buttons are not duplicated.
         let menu = NSMenu(title: "More Actions")
         menu.autoenablesItems = false
 
@@ -752,11 +735,11 @@ final class BottomRailView: NSView {
             menu.addItem(item)
         }
 
-        if hasPrimary && (dPrefixButton.isHidden || !showPrefixButtons) {
-            addItem(title: BottomRailView.railPrefixLabel(primary), action: .customPrefix, isOn: false, isEnabled: renameEnabled)
+        if showsPrimaryItem {
+            addItem(title: RailPrefixButtons.label(forPrefix: primary), action: .customPrefix, isOn: false, isEnabled: renameEnabled)
         }
-        if hasDistinctSecondary && (secondaryPrefixButton.isHidden || !showPrefixButtons) {
-            addItem(title: BottomRailView.railPrefixLabel(secondary), action: .customPrefixSecondary, isOn: false, isEnabled: renameEnabled)
+        if showsSecondaryItem {
+            addItem(title: RailPrefixButtons.label(forPrefix: secondary), action: .customPrefixSecondary, isOn: false, isEnabled: renameEnabled)
         }
         if shuffleButton.isHidden {
             addItem(title: "Shuffle",   action: .shuffle,   isOn: shuffleOn,    isEnabled: shuffleEnabled)
@@ -783,8 +766,8 @@ final class BottomRailView: NSView {
     @objc private func handleMoreMenuAction(_ sender: NSMenuItem) {
         guard let action = sender.representedObject as? MoreMenuAction else { return }
         switch action {
-        case .customPrefix:          controller?.performCustomPrefixRenameCurrentItem()
-        case .customPrefixSecondary: controller?.performSecondaryCustomPrefixRenameCurrentItem(source: "bottomRail-more")
+        case .customPrefix:          controller?.performPrefixAction(.primaryPrefix, source: "bottomRail")
+        case .customPrefixSecondary: controller?.performPrefixAction(.secondaryPrefix, source: "bottomRail-more")
         case .shuffle:               controller?.toggleShuffle()
         case .replay:                controller?.toggleRepeat()
         case .bookmark:              controller?.toggleBookmark()

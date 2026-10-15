@@ -375,7 +375,6 @@ final class UndoToastView: OverlayPanelView {
 
     private func applyColors() {
         let secondary = increaseContrast ? DWBColor.textPrimary : DWBColor.textSecondary
-        let tertiary = increaseContrast ? DWBColor.textSecondary : DWBColor.textTertiary
         iconView.contentTintColor = secondary
         captionLabel.attributedStringValue = NSAttributedString(string: UndoToastMetrics.caption(renamedFileCount: renamedCount), attributes: [
             .font: NSFont.systemFont(ofSize: 12.5),
@@ -390,11 +389,6 @@ final class UndoToastView: OverlayPanelView {
             .foregroundColor: theme.accentText,
             .kern: 0
         ])
-        title.addAttribute(.kern, value: 6, range: NSRange(location: title.length - 1, length: 1))
-        title.append(NSAttributedString(string: "\u{2318}Z", attributes: [
-            .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular),
-            .foregroundColor: tertiary
-        ]))
         undoButton.attributedTitle = title
         buttonWidth = ceil(title.size().width) + UndoToastMetrics.buttonHorizontalPadding * 2
     }
@@ -441,7 +435,7 @@ final class UndoToastView: OverlayPanelView {
         needsLayout = true
     }
 
-    /// Shows the toast for a single-file marker rename. A new call replaces the
+    /// Shows the toast for a single-file prefix change. A new call replaces the
     /// current toast and restarts the hold.
     func present(renamedTo filename: String) {
         lastFilename = filename
@@ -451,7 +445,7 @@ final class UndoToastView: OverlayPanelView {
         announceAndPresent(UndoToastMetrics.spokenText(renamedFileCount: 1, filename: filename))
     }
 
-    /// Shows the batch form for a successful multi-file marker rename: "Renamed N files".
+    /// Shows the batch form for a successful multi-file prefix change: "Prefix changed on N files".
     /// Same replacement, hold and VoiceOver rules as the one-file toast.
     func present(renamedFileCount count: Int) {
         lastFilename = nil
@@ -719,5 +713,35 @@ final class DropZoneOverlayView: OverlayPanelView {
         titleLabel.frame = NSRect(x: 22, y: y, width: width - 44, height: titleHeight)
         y -= 8 + subtitleHeight
         subtitleLabel.frame = NSRect(x: 22, y: y, width: width - 44, height: subtitleHeight)
+    }
+}
+
+// MARK: - Settings target outline
+
+/// Outline on the content edge of the player window that Settings controls (P136).
+/// Same rule as a focused pane: 2 pt in the accent fill, 3 pt in accent text under
+/// Increase Contrast. Draw-only: it takes no mouse events and does not affect layout.
+final class SettingsTargetOutlineView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        autoresizingMask = [.width, .height]
+        isHidden = true
+        setAccessibilityElement(false)
+        applyAppearance()
+        DWBAppearance.observe(self, selector: #selector(appearanceDidChange))
+    }
+
+    required init?(coder: NSCoder) { fatalError("programmatic only") }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    @objc private func appearanceDidChange() {
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        layer?.borderColor = DWBAppearance.shared.focusRingColor.cgColor
+        layer?.borderWidth = DWBAppearance.shared.focusRingWidth
     }
 }

@@ -57,6 +57,39 @@ enum VolumePolicy {
             + extendedFraction * CGFloat(maximumVolume - normalVolume)
         return clamped(Int(volume.rounded()))
     }
+
+    /// The volume a window plays at: 0 while muted, otherwise its stored volume.
+    static func effectiveVolume(stored: Int32, muted: Bool) -> Int32 {
+        muted ? minimumVolume : clamped(stored)
+    }
+
+    /// Converts the Settings slider position to a whole-percent window volume.
+    static func volume(forSliderValue value: Double) -> Int32 {
+        guard value.isFinite else { return minimumVolume }
+        return clamped(Int(min(Double(maximumVolume) + 1, max(Double(minimumVolume) - 1, value)).rounded()))
+    }
+
+    /// Settings readout text, for example "150%".
+    static func percentText(_ volume: Int32) -> String {
+        "\(clamped(volume))%"
+    }
+}
+
+/// Decides whether a window must write its own volume back to VLC (P137).
+///
+/// VLC keeps volume state that every player in the process shares, so a new audio
+/// output can start at another window's value. The window's cache cannot see that;
+/// only VLC's actual value can. A write is needed only when VLC reports a usable
+/// value that differs from what this window intends.
+enum AudioReassertPolicy {
+    /// The volume to write, or nil when no write is needed.
+    /// - Parameters:
+    ///   - actual: VLC's `audio.volume`. nil or negative means no audio output yet.
+    ///   - intended: 0 when the window is muted, otherwise its clamped volume.
+    static func valueToWrite(actual: Int32?, intended: Int32) -> Int32? {
+        guard let actual, actual >= VolumePolicy.minimumVolume else { return nil }
+        return actual == intended ? nil : intended
+    }
 }
 
 /// Shared geometry for the visual progress point of a scrubber.

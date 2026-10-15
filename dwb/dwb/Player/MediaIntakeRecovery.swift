@@ -15,6 +15,7 @@ enum MediaIntakeRecoveryAction: String, Equatable {
     case revealSource
     case locateSource
     case showDetails
+    case cancelIntake
 
     var title: String {
         switch self {
@@ -24,6 +25,7 @@ enum MediaIntakeRecoveryAction: String, Equatable {
         case .revealSource: return "Reveal"
         case .locateSource: return "Locate"
         case .showDetails: return "Show Details"
+        case .cancelIntake: return "Cancel"
         }
     }
 }
@@ -47,17 +49,39 @@ struct MediaIntakeRecoveryPresentation: Equatable {
     let style: MediaIntakeRecoveryStyle
     let allowsDismissal: Bool
 
-    static func scanning(folderCount: Int) -> MediaIntakeRecoveryPresentation {
+    static func scanning(folderCount: Int, foundCount: Int = 0) -> MediaIntakeRecoveryPresentation {
         let subject = folderCount == 1 ? "the selected folder" : "\(folderCount) selected folders"
+        let message = foundCount > 0
+            ? "Found \(countText(foundCount)) \(foundCount == 1 ? "file" : "files") in \(subject). Playback and the queue remain available."
+            : "Checking \(subject) for accepted local media. Playback and the queue remain available."
         return .init(
             title: "Scanning Media",
-            message: "Checking \(subject) for accepted local media. Playback and the queue remain available.",
+            message: message,
             details: "",
-            actions: [],
+            actions: [.cancelIntake],
             persistence: .untilDismissedOrSuccessfulIntake,
             style: .progress,
             allowsDismissal: false
         )
+    }
+
+    /// P138: shown after a large intake while its GIF durations load in the background.
+    static func loadingGIFDurations(finished: Int, total: Int) -> MediaIntakeRecoveryPresentation {
+        .init(
+            title: "Loading Media",
+            message: "Reading GIF durations: \(countText(finished)) of \(countText(total)). Playback and the queue remain available.",
+            details: "",
+            actions: [.cancelIntake],
+            persistence: .untilDismissedOrSuccessfulIntake,
+            style: .progress,
+            allowsDismissal: false
+        )
+    }
+
+    private static func countText(_ count: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: count)) ?? String(count)
     }
 }
 

@@ -83,9 +83,10 @@ enum ShortcutsCatalog {
             ShortcutEntry("Next Item", ".")
         ]),
         ShortcutGroup("File markers", items: [
-            ShortcutEntry("Primary Prefix Rename", "N", tone: .markerPrimary),
-            ShortcutEntry("Secondary Prefix Rename", "M", tone: .markerSecondary),
-            ShortcutEntry("Undo Marker Rename", "⌘Z")
+            ShortcutEntry("Primary prefix (add / remove / replace)", "N", tone: .markerPrimary),
+            ShortcutEntry("Secondary prefix (add / remove / replace)", "M", tone: .markerSecondary),
+            ShortcutEntry("Rename current file…", "R"),
+            ShortcutEntry("Undo last prefix change", "⌘Z")
         ]),
         ShortcutGroup("Queue & window", items: [
             ShortcutEntry("Open File", "⌘O"),

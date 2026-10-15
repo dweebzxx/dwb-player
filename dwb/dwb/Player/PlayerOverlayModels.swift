@@ -226,15 +226,15 @@ enum UndoToastMetrics {
     /// (the 68 pt rail plus 24 pt).
     static let bottomInset: CGFloat = DWBMetrics.railHeight + 24
 
-    /// A toast is shown for any marker rename: the one-file form names the file, the batch
+    /// A toast is shown for any prefix change: the one-file form names the file, the batch
     /// form (two or more) gives only the count.
     static func shouldShow(forRenamedFileCount count: Int) -> Bool { count >= 1 }
 
     static func isBatch(renamedFileCount count: Int) -> Bool { count > 1 }
 
-    /// Caption before the count or filename: "Renamed to <name>" / "Renamed <N files>".
+    /// Caption before the count or filename: "Prefix changed: <name>" / "Prefix changed on <N files>".
     static func caption(renamedFileCount count: Int) -> String {
-        isBatch(renamedFileCount: count) ? "Renamed" : "Renamed to"
+        isBatch(renamedFileCount: count) ? "Prefix changed on" : "Prefix changed:"
     }
 
     /// The semibold count: "N files". Never lists names.
@@ -242,9 +242,9 @@ enum UndoToastMetrics {
 
     static func spokenText(renamedFileCount count: Int, filename: String?) -> String {
         if isBatch(renamedFileCount: count) {
-            return "Renamed \(count) files. Undo with Command Z."
+            return "Prefix changed on \(count) files. Undo with Command Z."
         }
-        return "Renamed to \(filename ?? ""). Undo with Command Z."
+        return "Prefix changed on \(filename ?? ""). Undo with Command Z."
     }
 }
 
@@ -260,8 +260,8 @@ enum MarkerPrefixHighlight {
 
     static func match(in name: String, primary: String, secondary: String) -> Match? {
         let candidates: [(kind: Kind, prefix: String)] = [
-            (.primary, primary.trimmingCharacters(in: .whitespacesAndNewlines)),
-            (.secondary, secondary.trimmingCharacters(in: .whitespacesAndNewlines))
+            (.primary, PrefixNormalization.normalized(primary)),
+            (.secondary, PrefixNormalization.normalized(secondary))
         ]
         .filter { !$0.prefix.isEmpty }
         .sorted { $0.prefix.count > $1.prefix.count }

@@ -32,6 +32,9 @@ protocol QueuePageViewDelegate: AnyObject {
     /// Called when the user presses Undo in the footer's marker group. Runs the same
     /// undo as Command-Z.
     func queuePageDidRequestUndoMarkerRename(_ view: QueuePageView)
+    /// Called when `N`, `M` or `R` is pressed with the queue table focused (no modifiers, no
+    /// text field being edited).
+    func queuePage(_ view: QueuePageView, didRequestPrefixKeyAction action: PrefixKeyRouting.Action)
 }
 
 private final class QueueSharedEdgeDividerView: NSView {
@@ -96,14 +99,6 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
     private var totalDurationText = MediaFileSupport.formatClockDuration(0)
     private var bookmarkFilterEnabled = false
     private let sharedEdgeDivider = QueueSharedEdgeDividerView(frame: .zero)
-
-    /// When true, the one-click custom prefix rename button(s) are shown in the bottom bar.
-    var isCustomPrefixRenameEnabled: Bool = false {
-        didSet {
-            markerRowVisible = isCustomPrefixRenameEnabled
-            needsLayout = true
-        }
-    }
 
     /// True while this window has a marker rename it can still undo. Set by the window controller.
     var isUndoAvailable: Bool = false {
@@ -175,7 +170,6 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
     private let rescanButton              = QueuePillButton(labelColor: { DWBColor.textPrimary })
     private let footerClearSeparator      = NSView()
     private let removeAllButton           = QueuePillButton(labelColor: { DWBColor.errorText })
-    private let footerMoreButton           = QueueHeaderSymbolButton(frame: .zero)
     private let totalDurationLabel = NSTextField(labelWithString: "Total: 00:00:00")
     private enum EmptyStateAction {
         case addMedia
@@ -504,8 +498,8 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
             deleteButton.image = img.withSymbolConfiguration(removeCfg) ?? img
         }
         deleteButton.contentTintColor = DWBColor.errorText
-        deleteButton.toolTip   = "Remove selected file(s) from queue"
-        deleteButton.setAccessibilityLabel("Remove selected file(s) from queue")
+        deleteButton.toolTip   = "Remove from Queue"
+        deleteButton.setAccessibilityLabel("Remove from Queue")
         deleteButton.setAccessibilityHelp("Remove the selected rows from the queue without deleting files")
         deleteButton.setAccessibilityIdentifier("queue.footer.removeSelected")
         deleteButton.focusRingType = .default
@@ -513,18 +507,13 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         deleteButton.action    = #selector(deleteTapped)
         bottomBar.addSubview(deleteButton)
 
-        // Marker chip group: primary (N) and secondary (M) prefix chips plus Undo.
-        markerGroup.isHidden = true
+        // Marker chip group: primary and secondary prefix chips plus Undo.
         bottomBar.addSubview(markerGroup)
 
-        customPrefixButton.toolTip = "Apply primary prefix to selected filename(s) (one-click, no dialog). Shortcut: N"
-        customPrefixButton.setAccessibilityLabel("Apply primary custom prefix to selected file")
         customPrefixButton.setAccessibilityIdentifier("queue.footer.primaryPrefix")
         customPrefixButton.target = self
         customPrefixButton.action = #selector(customPrefixTapped)
 
-        customPrefixSecondaryButton.toolTip = "Apply secondary prefix to selected filename(s) (one-click, no dialog). Shortcut: M"
-        customPrefixSecondaryButton.setAccessibilityLabel("Apply secondary custom prefix to selected file")
         customPrefixSecondaryButton.setAccessibilityIdentifier("queue.footer.secondaryPrefix")
         customPrefixSecondaryButton.target = self
         customPrefixSecondaryButton.action = #selector(customPrefixSecondaryTapped)
@@ -555,18 +544,10 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         removeAllButton.action       = #selector(removeAllTapped)
         bottomBar.addSubview(removeAllButton)
 
-        footerMoreButton.symbolName = "ellipsis"
-        footerMoreButton.symbolPointSize = 12
-        footerMoreButton.symbolWeight = .medium
-        footerMoreButton.contentTintColor = DWBAppearance.shared.textSecondary
-        footerMoreButton.toolTip = "More queue actions"
-        footerMoreButton.setAccessibilityLabel("More queue actions")
-        footerMoreButton.setAccessibilityHelp("Show prefix actions that do not fit in the Queue footer")
-        footerMoreButton.setAccessibilityIdentifier("queue.footer.more")
-        footerMoreButton.target = self
-        footerMoreButton.action = #selector(footerMoreTapped)
-        footerMoreButton.isHidden = true
-        bottomBar.addSubview(footerMoreButton)
+        tableView.prefixKeyHandler = { [weak self] action in
+            guard let self = self else { return }
+            self.delegate?.queuePage(self, didRequestPrefixKeyAction: action)
+        }
 
         // Wire up keyboard-delete handler so Delete/Backspace on a selected row
         // removes that item.  Re-selecting the appropriate row is handled after
@@ -608,19 +589,14 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.applyColumnLayout(reason: "queue-setup", forceDiagnostic: true)
         }
-        updateCustomPrefixButtonLabels()
+        needsLayout = true
     }
 
     // MARK: - Layout constants
 
     private let headerH: CGFloat = QueuePanelMetrics.headerHeight
-    private var markerRowVisible = false
-    private var footerPlan = QueueFooterLayoutPlan(usesCompactIcons: false, usesCompactUndo: false, usesPrefixOverflow: false)
-
-    /// Footer height for the current content: one row, or two when the marker group shows.
-    private var bottomH: CGFloat {
-        QueuePanelMetrics.footerHeight(showsMarkerRow: markerRowVisible)
-    }
+    private var footerPlan = QueueFooterLayoutPlan(usesCompactIcons: false, usesCompactUndo: false,
+                                                    groupWraps: false, totalOnOwnRow: false)
 
     override func layout() {
         super.layout()
@@ -716,8 +692,9 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
 
         topSeparator.frame = NSRect(x: 0, y: b.height - headerH - 1, width: b.width, height: 1)
 
-        // Footer height depends on whether the marker row shows.
-        let footerH = bottomH
+        // Footer height depends on the footer plan, which depends on the width.
+        footerPlan = makeFooterPlan(width: b.width)
+        let footerH = QueuePanelMetrics.footerHeight(plan: footerPlan)
 
         // Table scroll view
         let tableTop = b.height - headerH - 1
@@ -743,93 +720,90 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         sharedEdgeDivider.frame = NSRect(x: 0, y: 0, width: 1, height: b.height)
     }
 
+    /// Applies the chip states, measures the footer's items and returns the plan for `width`.
+    private func makeFooterPlan(width: CGFloat) -> QueueFooterLayoutPlan {
+        let compactIcons = QueueFooterLayoutPlan.usesCompactIcons(width: width)
+        if rescanButton.isIconOnly != compactIcons || removeAllButton.isIconOnly != compactIcons {
+            rescanButton.isIconOnly = compactIcons
+            removeAllButton.isIconOnly = compactIcons
+        }
+        markerGroup.apply(primary: primaryChipState(),
+                          secondary: secondaryChipState(),
+                          undoEnabled: isUndoAvailable,
+                          compactUndo: footerPlan.usesCompactUndo)
+        let plan = QueueFooterLayoutPlan.make(
+            width: width,
+            removeButtonWidth: QueuePanelMetrics.footerRemoveButtonSize,
+            fullGroupWidth: markerGroup.preferredWidth(compactUndo: false),
+            compactUndoGroupWidth: markerGroup.preferredWidth(compactUndo: true),
+            rescanWidth: rescanButton.preferredWidth(),
+            totalWidth: ceil(totalDurationLabel.intrinsicContentSize.width),
+            clearWidth: removeAllButton.preferredWidth())
+        markerGroup.apply(primary: primaryChipState(),
+                          secondary: secondaryChipState(),
+                          undoEnabled: isUndoAvailable,
+                          compactUndo: plan.usesCompactUndo)
+        return plan
+    }
+
+    /// Rows from the bottom: Rescan row, then the total label when it needs its own row,
+    /// then the marker group (own row when wrapped), then Remove (beside the group unless wrapped).
     private func layoutFooter(width: CGFloat, height: CGFloat) {
+        let plan = footerPlan
         let pad = QueuePanelMetrics.footerHorizontalPadding
         let gap = QueuePanelMetrics.footerRowGap
+        let rowSpacing = QueuePanelMetrics.footerRowSpacing
         let pillH = QueuePanelMetrics.footerPillHeight
-        let removeSize: CGFloat = 26
+        let removeSize = QueuePanelMetrics.footerRemoveButtonSize
+        let groupH = QueuePanelMetrics.markerGroupHeight
+        let rowWidth = width - pad * 2
 
-        let showMarkerGroup = markerRowVisible
-        let hasPrefixActions = primaryChipState() != nil || secondaryChipState() != nil
-        let fullW = markerGroup.preferredWidth(compactUndo: false)
-        let compactW = markerGroup.preferredWidth(compactUndo: true)
-        let plan = QueueFooterLayoutPlan.make(width: width,
-                                              hasPrefixActions: hasPrefixActions,
-                                              removeButtonWidth: removeSize,
-                                              fullGroupWidth: fullW,
-                                              compactUndoGroupWidth: compactW)
-        if plan != footerPlan {
-            footerPlan = plan
-            configureCompactFooterIcons(plan.usesCompactIcons)
-        }
-
-        // Rows: bottom row (Rescan … Total | Clear Queue) is y = bottomPadding; the marker row sits above it.
+        // Last row: Rescan, total, divider, Clear Queue.
         let actionRowY = QueuePanelMetrics.footerBottomPadding
-        let markerRowY = actionRowY + pillH + QueuePanelMetrics.footerRowSpacing
+        var nextRowY = actionRowY + pillH + rowSpacing
 
-        var nextX = pad
-        if showMarkerGroup {
-            deleteButton.frame = NSRect(x: nextX,
-                                        y: markerRowY + floor((QueuePanelMetrics.markerGroupHeight - removeSize) / 2),
-                                        width: removeSize, height: removeSize)
-            nextX = deleteButton.frame.maxX + gap
-            markerGroup.isHidden = false
-            footerMoreButton.isHidden = !plan.usesPrefixOverflow
-            footerMoreButton.setAccessibilityElement(plan.usesPrefixOverflow)
-            markerGroup.apply(primary: plan.usesPrefixOverflow ? nil : primaryChipState(),
-                              secondary: plan.usesPrefixOverflow ? nil : secondaryChipState(),
-                              undoEnabled: isUndoAvailable,
-                              compactUndo: plan.usesCompactUndo)
-            let groupW = markerGroup.preferredWidth(compactUndo: plan.usesCompactUndo)
-            markerGroup.frame = NSRect(x: nextX, y: markerRowY, width: groupW,
-                                       height: QueuePanelMetrics.markerGroupHeight)
-            nextX = markerGroup.frame.maxX + gap
-            if plan.usesPrefixOverflow {
-                footerMoreButton.frame = NSRect(x: nextX,
-                                                y: markerRowY + floor((QueuePanelMetrics.markerGroupHeight - removeSize) / 2),
-                                                width: removeSize, height: removeSize)
-            } else {
-                footerMoreButton.frame = .zero
-            }
-        } else {
-            markerGroup.isHidden = true
-            markerGroup.frame = .zero
-            footerMoreButton.isHidden = true
-            footerMoreButton.setAccessibilityElement(false)
-            footerMoreButton.frame = .zero
-            deleteButton.frame = NSRect(x: nextX,
-                                        y: actionRowY + floor((pillH - removeSize) / 2),
-                                        width: removeSize, height: removeSize)
-        }
-
-        // Action row.
-        var actionX = showMarkerGroup ? pad : deleteButton.frame.maxX + gap
         let rescanW = rescanButton.preferredWidth()
-        rescanButton.frame = NSRect(x: actionX, y: actionRowY, width: rescanW, height: pillH)
+        rescanButton.frame = NSRect(x: pad, y: actionRowY, width: rescanW, height: pillH)
         rescanButton.isEnabled = !items.isEmpty
-        actionX += rescanW + gap
 
         let clearW = removeAllButton.preferredWidth()
-        removeAllButton.frame = NSRect(x: max(actionX, width - clearW - pad),
-                                       y: actionRowY, width: clearW, height: pillH)
+        removeAllButton.frame = NSRect(x: width - pad - clearW, y: actionRowY, width: clearW, height: pillH)
         removeAllButton.isEnabled = !items.isEmpty
 
-        let separatorGap: CGFloat = 10
-        let clearSeparatorX = removeAllButton.frame.minX - separatorGap
-        let availableBetweenRescanAndClear = clearSeparatorX - actionX - gap
-        let totalPreferredW = ceil(totalDurationLabel.intrinsicContentSize.width)
-        let showTotalDuration = availableBetweenRescanAndClear >= max(totalPreferredW, 86)
-        footerClearSeparator.isHidden = !showTotalDuration
-        footerClearSeparator.frame = showTotalDuration
-            ? NSRect(x: clearSeparatorX, y: actionRowY + floor((pillH - 16) / 2), width: 1, height: 16)
-            : .zero
-        let totalRightEdge = showTotalDuration ? footerClearSeparator.frame.minX - gap : actionX
+        let dividerW = QueuePanelMetrics.footerDividerWidth
+        footerClearSeparator.isHidden = false
+        footerClearSeparator.frame = NSRect(x: removeAllButton.frame.minX - gap - dividerW,
+                                            y: actionRowY + floor((pillH - 16) / 2),
+                                            width: dividerW, height: 16)
         let totalHeight = ceil(totalDurationLabel.intrinsicContentSize.height)
-        totalDurationLabel.frame = NSRect(x: actionX,
-                                          y: actionRowY + floor((pillH - totalHeight) / 2),
-                                          width: max(0, totalRightEdge - actionX),
-                                          height: totalHeight)
-        totalDurationLabel.isHidden = !showTotalDuration
+        if plan.totalOnOwnRow {
+            let rowH = QueuePanelMetrics.footerTotalRowHeight
+            totalDurationLabel.frame = NSRect(x: pad,
+                                              y: nextRowY + floor((rowH - totalHeight) / 2),
+                                              width: rowWidth, height: totalHeight)
+            nextRowY += rowH + rowSpacing
+        } else {
+            let totalX = rescanButton.frame.maxX + gap
+            totalDurationLabel.frame = NSRect(x: totalX,
+                                              y: actionRowY + floor((pillH - totalHeight) / 2),
+                                              width: max(0, footerClearSeparator.frame.minX - gap - totalX),
+                                              height: totalHeight)
+        }
+
+        // Marker group, then Remove.
+        markerGroup.isHidden = false
+        let groupW = markerGroup.preferredWidth(compactUndo: plan.usesCompactUndo)
+        if plan.groupWraps {
+            markerGroup.frame = NSRect(x: pad, y: nextRowY, width: groupW, height: groupH)
+            let removeRowY = nextRowY + groupH + rowSpacing
+            deleteButton.frame = NSRect(x: pad, y: removeRowY, width: removeSize, height: removeSize)
+        } else {
+            deleteButton.frame = NSRect(x: pad,
+                                        y: nextRowY + floor((groupH - removeSize) / 2),
+                                        width: removeSize, height: removeSize)
+            markerGroup.frame = NSRect(x: deleteButton.frame.maxX + gap, y: nextRowY,
+                                       width: groupW, height: groupH)
+        }
     }
 
     private func layoutEmptyState() {
@@ -1276,11 +1250,11 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
     }
 
     private func updateTotalDurationLabel() {
-        if currentSearchQuery.isEmpty && !bookmarkFilterEnabled {
-            totalDurationLabel.stringValue = "Total: \(totalDurationText)"
-        } else {
-            totalDurationLabel.stringValue = "Total: \(totalDurationText) | \(visibleItems.count)/\(items.count) shown"
-        }
+        totalDurationLabel.stringValue = QueueFooterText.total(
+            duration: totalDurationText,
+            itemCount: items.count,
+            visibleCount: visibleItems.count,
+            isFiltered: !currentSearchQuery.isEmpty || bookmarkFilterEnabled)
         totalDurationLabel.setAccessibilityValue(totalDurationLabel.stringValue)
     }
 
@@ -1367,7 +1341,6 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         sortChevronView.color = appearance.textSecondary
         searchIconView.color = appearance.textTertiary
         closeButton.contentTintColor = appearance.textSecondary
-        footerMoreButton.contentTintColor = appearance.textSecondary
         totalDurationLabel.textColor = appearance.textSecondary
         emptyStateDetailLabel.textColor = appearance.textTertiary
         applyEmptyStateCircleAppearance()
@@ -1444,33 +1417,14 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
     }
 
     @objc private func customPrefixTapped() {
-        let selected = tableView.selectedRowIndexes
-        if selected.isEmpty {
-            guard let row = currentDisplayIndexIfVisible() else { return }
-            delegate?.queuePage(self, didRequestCustomPrefixRenameAt: [row])
-        } else {
-            let displayIndices = selected.sorted().compactMap { displayIndex(forVisibleRow: $0) }
-            delegate?.queuePage(self, didRequestCustomPrefixRenameAt: displayIndices)
-        }
+        delegate?.queuePage(self, didRequestCustomPrefixRenameAt: prefixTargetDisplayIndices())
     }
 
     @objc private func customPrefixSecondaryTapped() {
-        let selected = tableView.selectedRowIndexes
-        if selected.isEmpty {
-            guard let row = currentDisplayIndexIfVisible() else { return }
-            delegate?.queuePage(self, didRequestSecondaryCustomPrefixRenameAt: [row])
-        } else {
-            let displayIndices = selected.sorted().compactMap { displayIndex(forVisibleRow: $0) }
-            delegate?.queuePage(self, didRequestSecondaryCustomPrefixRenameAt: displayIndices)
-        }
+        delegate?.queuePage(self, didRequestSecondaryCustomPrefixRenameAt: prefixTargetDisplayIndices())
     }
 
     @objc private func handleCustomPrefixValueChanged() {
-        updateCustomPrefixButtonLabels()
-    }
-
-    private func updateCustomPrefixButtonLabels() {
-        markerRowVisible = isCustomPrefixRenameEnabled
         needsLayout = true
     }
 
@@ -1486,76 +1440,40 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         return selected.compactMap { visibleItem(at: $0)?.displayName }
     }
 
-    private func primaryChipState() -> QueueMarkerChipState? {
-        guard isCustomPrefixRenameEnabled else { return nil }
-        return .make(kind: .primary,
-                     prefix: SettingsWindowController.customPrefixValue(),
-                     targetNames: markerTargetNames())
+    /// Display indices of the selected rows, ascending.
+    func selectedDisplayIndices() -> [Int] {
+        tableView.selectedRowIndexes.sorted().compactMap { displayIndex(forVisibleRow: $0) }
     }
 
+    /// What a prefix action targets: the selected rows, or the current item when none is selected.
+    func prefixTargetDisplayIndices() -> [Int] {
+        if tableView.selectedRowIndexes.isEmpty {
+            return currentDisplayIndexIfVisible().map { [$0] } ?? []
+        }
+        return selectedDisplayIndices()
+    }
+
+    private func primaryChipState() -> QueueMarkerChipState {
+        .make(kind: .primary,
+              prefix: SettingsWindowController.customPrefixValue(),
+              targetNames: markerTargetNames(),
+              queueHasItems: !items.isEmpty)
+    }
+
+    /// nil when the secondary prefix equals the primary: it is not offered as a separate action.
     private func secondaryChipState() -> QueueMarkerChipState? {
-        guard isCustomPrefixRenameEnabled else { return nil }
-        let primary = Self.trimmedPrefix(SettingsWindowController.customPrefixValue())
-        let secondary = Self.trimmedPrefix(SettingsWindowController.customPrefixSecondaryValue())
-        // A secondary prefix equal to the primary is not offered as a separate action.
-        if !secondary.isEmpty && secondary == primary { return nil }
+        let primary = SettingsWindowController.customPrefixValue()
+        let secondary = SettingsWindowController.customPrefixSecondaryValue()
+        guard QueueMarkerChipState.secondaryIsShown(primary: primary, secondary: secondary) else { return nil }
         return .make(kind: .secondary,
-                     prefix: SettingsWindowController.customPrefixSecondaryValue(),
-                     targetNames: markerTargetNames())
-    }
-
-    private static func trimmedPrefix(_ prefix: String) -> String {
-        QueueMarkerChipState.trimmed(prefix)
-    }
-
-    private static func queuePrefixLabel(_ prefix: String) -> String {
-        QueueMarkerChipState.label(forPrefix: prefix)
-    }
-
-    private func configureCompactFooterIcons(_ compact: Bool) {
-        rescanButton.isIconOnly = compact
-        removeAllButton.isIconOnly = compact
-        needsLayout = true
+                     prefix: secondary,
+                     targetNames: markerTargetNames(),
+                     queueHasItems: !items.isEmpty)
     }
 
     @objc private func undoMarkerRenameTapped() {
         guard isUndoAvailable else { return }
         delegate?.queuePageDidRequestUndoMarkerRename(self)
-    }
-
-    @objc private func footerMoreTapped() {
-        let menu = NSMenu(title: "More Queue Actions")
-        menu.autoenablesItems = false
-
-        if let state = primaryChipState(), !state.isBlank {
-            let item = NSMenuItem(title: "Apply “\(state.label)” Prefix",
-                                  action: #selector(footerPrimaryPrefixTapped),
-                                  keyEquivalent: "")
-            item.target = self
-            item.isEnabled = state.isEnabled
-            menu.addItem(item)
-        }
-        if let state = secondaryChipState(), !state.isBlank {
-            let item = NSMenuItem(title: "Apply “\(state.label)” Prefix",
-                                  action: #selector(footerSecondaryPrefixTapped),
-                                  keyEquivalent: "")
-            item.target = self
-            item.isEnabled = state.isEnabled
-            menu.addItem(item)
-        }
-        guard !menu.items.isEmpty else { return }
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: footerMoreButton.frame.minX,
-                               y: footerMoreButton.frame.maxY),
-                   in: bottomBar)
-    }
-
-    @objc private func footerPrimaryPrefixTapped() {
-        customPrefixTapped()
-    }
-
-    @objc private func footerSecondaryPrefixTapped() {
-        customPrefixSecondaryTapped()
     }
 
     @objc private func rescanTapped() {
@@ -1699,6 +1617,8 @@ final class QueuePageTableView: NSTableView {
     /// Called when Delete or Backspace is pressed with one or more selected rows.
     /// Indices are sorted descending so the caller can remove them safely.
     var deleteRowsHandler: (([Int]) -> Void)?
+    /// Called for an unmodified `N`, `M` or `R` while the table is focused.
+    var prefixKeyHandler: ((PrefixKeyRouting.Action) -> Void)?
     /// Called when a drag over the table exits or ends, so the drop line can go.
     var onDragEnded: (() -> Void)?
 
@@ -1739,6 +1659,13 @@ final class QueuePageTableView: NSTableView {
             let rows = selectedRowIndexes
             guard !rows.isEmpty else { return }
             deleteRowsHandler?(rows.sorted(by: >))
+            return
+        }
+        let hasModifiers = !event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+        if let action = PrefixKeyRouting.action(forCharacters: event.charactersIgnoringModifiers,
+                                                hasModifiers: hasModifiers,
+                                                isEditingText: window?.firstResponder is NSText) {
+            if !event.isARepeat { prefixKeyHandler?(action) }
             return
         }
         super.keyDown(with: event)

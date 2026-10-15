@@ -1,39 +1,5 @@
 import Cocoa
 
-/// Compact keyboard-shortcut tag rendered beside a control (e.g. "N" next to the
-/// custom prefix rename buttons). Decorative only: it never intercepts clicks and is hidden
-/// from accessibility — the shortcut is announced through the control's own
-/// help/tooltip text instead. Dark-theme styling matches the rail/footer chrome.
-final class ShortcutKeyBadge: NSTextField {
-    static let badgeWidth: CGFloat  = 15
-    static let badgeHeight: CGFloat = 13
-
-    init(key: String) {
-        super.init(frame: .zero)
-        stringValue = key
-        isEditable = false
-        isSelectable = false
-        isBordered = false
-        isBezeled = false
-        drawsBackground = false
-        alignment = .center
-        usesSingleLineMode = true
-        lineBreakMode = .byClipping
-        font = .monospacedSystemFont(ofSize: 8, weight: .semibold)
-        textColor = DWBAppearance.shared.textSecondary
-        wantsLayer = true
-        layer?.backgroundColor = DWBColor.canvas.cgColor
-        layer?.borderColor = DWBColor.borderStrong.cgColor
-        layer?.borderWidth = 1.0
-        layer?.cornerRadius = DWBMetrics.radiusTag
-        setAccessibilityElement(false)
-    }
-
-    required init?(coder: NSCoder) { fatalError("programmatic only") }
-
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
 /// Source-over composite of two colors, used where a hover or pressed overlay
 /// sits on top of a toggled tint.
 private func composite(_ top: NSColor, over bottom: NSColor) -> NSColor {

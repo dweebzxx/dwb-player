@@ -18,18 +18,21 @@ extension Notification.Name {
     static let acceptedMediaTypesChanged      = Notification.Name("dwb.acceptedMediaTypesChanged")
     /// Posted when the title overlay on playback start setting changes.
     static let titleOverlaySettingChanged     = Notification.Name("dwb.titleOverlaySettingChanged")
-    /// Posted when the one-click custom prefix rename setting changes.
-    static let customPrefixRenameChanged                   = Notification.Name("dwb.customPrefixRenameChanged")
     /// Posted when the stored custom prefix value changes.
     static let customPrefixValueChanged                    = Notification.Name("dwb.customPrefixValueChanged")
     /// Posted when the debug console enable setting changes.
     static let debugConsoleSettingChanged     = Notification.Name("dwb.debugConsoleSettingChanged")
     /// Posted when one player window's playback speed changes.
     static let playbackSpeedChanged           = Notification.Name("dwb.playbackSpeedChanged")
+    /// Posted when one player window's effective volume or mute changes, from any route.
+    static let windowVolumeChanged            = Notification.Name("dwb.windowVolumeChanged")
     /// Posted when any of the playback-bar button visibility toggles (x_,
     /// Shuffle, Replay, Volume, Bookmark) change. BottomRailView observes
     /// this and re-applies button visibility / rebuilds the More menu.
     static let bottomRailButtonVisibilityChanged = Notification.Name("dwb.bottomRailButtonVisibilityChanged")
+    /// Posted by a player window when it becomes key, is minimized or restored, closes,
+    /// or changes its title. Settings re-picks its target window on it.
+    static let playerWindowTargetingChanged = Notification.Name("dwb.playerWindowTargetingChanged")
 }
 
 /// Singleton settings panel. Open via dwb > Settings… (Cmd+,).
@@ -66,12 +69,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     static let acceptGIFKey             = SettingsDefaultsRegistry.Keys.acceptGIFMedia
     /// Show title overlay when video or image playback starts. Default: true.
     static let showTitleOverlayKey      = SettingsDefaultsRegistry.Keys.showTitleOverlay
-    /// One-click delete_ prefix rename in Queue Page (legacy key; migrated to customPrefixQueuePageKey).
-    static let deletePrefixRenameKey    = SettingsDefaultsRegistry.Keys.deletePrefixRenameEnabled
-    /// Stored custom prefix string for one-click rename. Trailing spaces preserved. Default: "".
+    /// Stored custom prefix string for one-click rename, kept exactly as typed. Default: "".
     static let customPrefixValueKey     = SettingsDefaultsRegistry.Keys.customPrefixValue
-    /// One-click custom prefix rename in Queue Page. Default: false (migrates from deletePrefixRenameKey).
-    static let customPrefixQueuePageKey = SettingsDefaultsRegistry.Keys.customPrefixQueuePageEnabled
     /// Stored secondary custom prefix string for one-click rename. Default: "".
     static let customPrefixSecondaryValueKey = SettingsDefaultsRegistry.Keys.customPrefixSecondaryValue
     /// Show in-app debug console. Default: false.
@@ -92,8 +91,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     static let bottomRailShowReplayKey    = SettingsDefaultsRegistry.Keys.bottomRailShowReplayButton
     static let bottomRailShowVolumeKey    = SettingsDefaultsRegistry.Keys.bottomRailShowVolumeButton
     static let bottomRailShowBookmarkKey  = SettingsDefaultsRegistry.Keys.bottomRailShowBookmarkButton
-    /// Default opacity for newly created player windows. Current windows keep local state.
-    static let playerWindowOpacityKey   = SettingsDefaultsRegistry.Keys.playerWindowOpacity
+    /// Window opacity is per window and never stored. New windows start at 100%.
     static let playerWindowOpacityMin: CGFloat = CGFloat(SettingsDefaultsRegistry.Defaults.playerWindowOpacityMin)
     static let playerWindowOpacityMax: CGFloat = CGFloat(SettingsDefaultsRegistry.Defaults.playerWindowOpacityMax)
     static let defaultPlayerWindowOpacityValue: CGFloat = CGFloat(SettingsDefaultsRegistry.Defaults.playerWindowOpacity)
@@ -105,21 +103,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     static func clampedPlayerWindowOpacity(_ value: CGFloat) -> CGFloat {
         guard value.isFinite else { return defaultPlayerWindowOpacityValue }
         return min(playerWindowOpacityMax, max(playerWindowOpacityMin, value))
-    }
-    static func defaultPlayerWindowOpacity() -> CGFloat {
-        let defaults = UserDefaults.standard
-        guard defaults.object(forKey: playerWindowOpacityKey) != nil else {
-            return defaultPlayerWindowOpacityValue
-        }
-        let value = CGFloat(defaults.double(forKey: playerWindowOpacityKey))
-        let clamped = clampedPlayerWindowOpacity(value)
-        if clamped != value {
-            defaults.set(Double(clamped), forKey: playerWindowOpacityKey)
-        }
-        return clamped
-    }
-    static func setDefaultPlayerWindowOpacity(_ opacity: CGFloat) {
-        UserDefaults.standard.set(Double(clampedPlayerWindowOpacity(opacity)), forKey: playerWindowOpacityKey)
     }
     static func playerWindowOpacityPercent(_ opacity: CGFloat) -> Int {
         Int((clampedPlayerWindowOpacity(opacity) * 100.0).rounded())
@@ -140,22 +123,20 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     static func isShowTitleOverlayEnabled() -> Bool {
         UserDefaults.standard.bool(forKey: showTitleOverlayKey)
     }
-    static func isDeletePrefixRenameEnabled() -> Bool {
-        UserDefaults.standard.bool(forKey: deletePrefixRenameKey)
-    }
-    static func customPrefixValue() -> String {
+    /// The prefixes as typed, for the Settings fields. Everything else uses the trimmed values.
+    static func storedCustomPrefixValue() -> String {
         UserDefaults.standard.string(forKey: customPrefixValueKey) ?? ""
     }
-    static func customPrefixSecondaryValue() -> String {
+    static func storedCustomPrefixSecondaryValue() -> String {
         UserDefaults.standard.string(forKey: customPrefixSecondaryValueKey) ?? ""
     }
-    /// Reads new key; migrates from old deletePrefixRenameKey if new key has never been written.
-    static func isCustomPrefixQueuePageEnabled() -> Bool {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: customPrefixQueuePageKey) != nil {
-            return defaults.bool(forKey: customPrefixQueuePageKey)
-        }
-        return defaults.bool(forKey: deletePrefixRenameKey)
+    /// The primary prefix, normalized (`PrefixNormalization`). The chip label, the N key,
+    /// the chip, the rail button, the highlight and the filename all use this one value.
+    static func customPrefixValue() -> String {
+        PrefixNormalization.normalized(storedCustomPrefixValue())
+    }
+    static func customPrefixSecondaryValue() -> String {
+        PrefixNormalization.normalized(storedCustomPrefixSecondaryValue())
     }
     static func isDebugConsoleEnabled() -> Bool {
         UserDefaults.standard.bool(forKey: debugConsoleKey)
@@ -285,7 +266,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         NotificationCenter.default.post(name: .gifLoopCountChanged, object: nil)
         NotificationCenter.default.post(name: .acceptedMediaTypesChanged, object: nil)
         NotificationCenter.default.post(name: .titleOverlaySettingChanged, object: nil)
-        NotificationCenter.default.post(name: .customPrefixRenameChanged, object: nil)
         NotificationCenter.default.post(name: .customPrefixValueChanged, object: nil)
         NotificationCenter.default.post(name: .debugConsoleSettingChanged, object: nil)
         NotificationCenter.default.post(name: .bottomRailButtonVisibilityChanged, object: nil)
@@ -339,9 +319,18 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     private let windowOpacitySlider       = NSSlider()
     private let windowOpacityPercentLabel = NSTextField(labelWithString: "100%")
     private let windowOpacityResetButton  = DWBButton(title: "Default", variant: .neutral, size: .small)
+    private let windowVolumeSlider        = NSSlider()
+    private let windowVolumePercentLabel  = NSTextField(labelWithString: "100%")
+    private let windowVolumeResetButton   = DWBButton(title: "Default", variant: .neutral, size: .small)
+
+    // Helper text naming the target player window (opacity, playback speed, and volume).
+    private let playbackSpeedTargetLabel  = NSTextField(wrappingLabelWithString: PlayerWindowTargeting.noTargetHelperText)
+    private let windowVolumeTargetLabel   = NSTextField(wrappingLabelWithString: PlayerWindowTargeting.noTargetHelperText)
+    private let windowOpacityTargetLabel  = NSTextField(wrappingLabelWithString: PlayerWindowTargeting.noTargetHelperText)
+    /// The player window currently showing the Settings target outline.
+    private weak var outlinedPlayerWindowController: PlayerWindowController?
 
     // Queue & Files section
-    private let customPrefixQueuePageCheckbox          = NSButton()
     private let customPrefixValueTextField             = DWBTextField()
     private let customPrefixSecondaryValueTextField    = DWBTextField()
     private let queuePanelOpenAtLaunchCheckbox = NSButton()
@@ -398,6 +387,12 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             name: .playbackSpeedChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowVolumeDidChange(_:)),
+            name: .windowVolumeChanged,
+            object: nil
+        )
         // Keep Settings above player windows while the app is active, but do not use
         // a global floating level that would place it above other applications' windows.
         NotificationCenter.default.addObserver(
@@ -412,6 +407,39 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             name: NSApplication.didBecomeActiveNotification,
             object: nil
         )
+        // The target and its outline follow player windows and Settings' own visibility.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerWindowTargetingDidChange(_:)),
+            name: .playerWindowTargetingChanged,
+            object: nil
+        )
+        for name in [NSWindow.didMiniaturizeNotification,
+                     NSWindow.didDeminiaturizeNotification,
+                     NSWindow.didChangeOcclusionStateNotification] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(settingsWindowVisibilityDidChange(_:)),
+                name: name,
+                object: win
+            )
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(settingsWindowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: win
+        )
+        for name in [NSApplication.didResignActiveNotification,
+                     NSApplication.didHideNotification,
+                     NSApplication.didUnhideNotification] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(settingsWindowVisibilityDidChange(_:)),
+                name: name,
+                object: nil
+            )
+        }
         DWBAppearance.observe(self, selector: #selector(appearanceDidChange))
     }
 
@@ -613,9 +641,38 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         }
         gifLoopCountPopup.setAccessibilityIdentifier("settings.playback.gifLoopCount")
 
+        // Window volume uses the Window opacity row's controls, widths, and spacing.
+        windowVolumeSlider.minValue = Double(VolumePolicy.minimumVolume)
+        windowVolumeSlider.maxValue = Double(VolumePolicy.maximumVolume)
+        windowVolumeSlider.target = self
+        windowVolumeSlider.action = #selector(windowVolumeSliderChanged(_:))
+        windowVolumeSlider.translatesAutoresizingMaskIntoConstraints = false
+        windowVolumeSlider.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        windowVolumeSlider.setAccessibilityIdentifier("settings.playback.windowVolume")
+
+        windowVolumePercentLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        windowVolumePercentLabel.alignment = .right
+        windowVolumePercentLabel.translatesAutoresizingMaskIntoConstraints = false
+        windowVolumePercentLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        let applyVolumePercentColor: () -> Void = { [weak self] in
+            self?.windowVolumePercentLabel.textColor = DWBAppearance.shared.textSecondary
+        }
+        applyVolumePercentColor()
+        contrastRefreshers.append(applyVolumePercentColor)
+
+        windowVolumeResetButton.target = self
+        windowVolumeResetButton.action = #selector(resetWindowVolume(_:))
+        windowVolumeResetButton.setAccessibilityIdentifier("settings.playback.resetWindowVolume")
+
+        let volumeStack = NSStackView(views: [windowVolumeSlider, windowVolumePercentLabel, windowVolumeResetButton])
+        volumeStack.orientation = .horizontal
+        volumeStack.alignment = .centerY
+        volumeStack.spacing = 10
+
         let section1 = buildSection(title: "Playback behavior", rows: [
             buildRow(label: "Skip duration", control: skipDurationPopup),
-            buildRow(label: "Playback speed", control: playbackSpeedPopup, helperText: "Applies to the frontmost player window."),
+            buildRow(label: "Playback speed", control: playbackSpeedPopup, helperLabel: playbackSpeedTargetLabel),
+            buildRow(label: "Window volume", control: volumeStack, helperLabel: windowVolumeTargetLabel),
             buildRow(label: nil, control: showTitleOverlayCheckbox)
         ])
 
@@ -685,11 +742,17 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         opacityStack.alignment = .centerY
         opacityStack.spacing = 10
 
-        configure(bottomRailShowXCheckbox,        title: "Show prefix buttons in playback bar",  state: Self.isBottomRailShowXEnabled())
-        configure(bottomRailShowShuffleCheckbox,  title: "Show Shuffle button in playback bar",  state: Self.isBottomRailShowShuffleEnabled())
-        configure(bottomRailShowReplayCheckbox,   title: "Show Replay button in playback bar",   state: Self.isBottomRailShowReplayEnabled())
-        configure(bottomRailShowVolumeCheckbox,   title: "Show Volume button in playback bar",   state: Self.isBottomRailShowVolumeEnabled())
-        configure(bottomRailShowBookmarkCheckbox, title: "Show Bookmark button in playback bar", state: Self.isBottomRailShowBookmarkEnabled())
+        // Short visible labels under the section title; the full phrase stays the VoiceOver label.
+        configure(bottomRailShowXCheckbox,        title: "Prefix buttons", state: Self.isBottomRailShowXEnabled())
+        configure(bottomRailShowShuffleCheckbox,  title: "Shuffle",        state: Self.isBottomRailShowShuffleEnabled())
+        configure(bottomRailShowReplayCheckbox,   title: "Replay",         state: Self.isBottomRailShowReplayEnabled())
+        configure(bottomRailShowVolumeCheckbox,   title: "Volume",         state: Self.isBottomRailShowVolumeEnabled())
+        configure(bottomRailShowBookmarkCheckbox, title: "Bookmark",       state: Self.isBottomRailShowBookmarkEnabled())
+        bottomRailShowXCheckbox.setAccessibilityLabel("Show prefix buttons in playback bar")
+        bottomRailShowShuffleCheckbox.setAccessibilityLabel("Show Shuffle button in playback bar")
+        bottomRailShowReplayCheckbox.setAccessibilityLabel("Show Replay button in playback bar")
+        bottomRailShowVolumeCheckbox.setAccessibilityLabel("Show Volume button in playback bar")
+        bottomRailShowBookmarkCheckbox.setAccessibilityLabel("Show Bookmark button in playback bar")
         bottomRailShowXCheckbox.setAccessibilityIdentifier("settings.controls.showPrefixButtons")
         bottomRailShowShuffleCheckbox.setAccessibilityIdentifier("settings.controls.showShuffle")
         bottomRailShowReplayCheckbox.setAccessibilityIdentifier("settings.controls.showRepeat")
@@ -701,18 +764,26 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             buildRow(label: nil, control: chromeReducedMotionCheckbox)
         ])
 
+        // Design system 9.5: rail buttons as a 2-column checkbox grid.
+        let railButtonsGrid = NSGridView(views: [
+            [bottomRailShowXCheckbox, NSGridCell.emptyContentView],
+            [bottomRailShowShuffleCheckbox, bottomRailShowReplayCheckbox],
+            [bottomRailShowVolumeCheckbox, bottomRailShowBookmarkCheckbox]
+        ])
+        railButtonsGrid.rowSpacing = DWBMetrics.rowGap
+        railButtonsGrid.columnSpacing = DWBMetrics.columnGap
+        railButtonsGrid.xPlacement = .leading
+        railButtonsGrid.rowAlignment = .firstBaseline
+        railButtonsGrid.translatesAutoresizingMaskIntoConstraints = false
+
         let section1b = buildSection(title: "Playback bar buttons", rows: [
-            buildRow(label: nil, control: bottomRailShowXCheckbox),
-            buildRow(label: nil, control: bottomRailShowShuffleCheckbox),
-            buildRow(label: nil, control: bottomRailShowReplayCheckbox),
-            buildRow(label: nil, control: bottomRailShowVolumeCheckbox),
-            buildRow(label: nil, control: bottomRailShowBookmarkCheckbox)
+            buildRow(label: nil, control: railButtonsGrid)
         ])
 
         let section4 = buildSection(title: "Window chrome", rows: [
             buildRow(label: nil, control: autoHideTitlebarCheckbox),
             buildRow(label: nil, control: completeVideoWindowModeCheckbox),
-            buildRow(label: "Window opacity", control: opacityStack)
+            buildRow(label: "Window opacity", control: opacityStack, helperLabel: windowOpacityTargetLabel)
         ])
 
         return buildPage(index: 1, sections: [section1, section1b, section4])
@@ -721,34 +792,31 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     // MARK: - Section: Queue & Files
 
     private func buildQueueFilesSection() -> NSView {
-        configure(customPrefixQueuePageCheckbox, title: "Enable one-click custom prefix rename", state: Self.isCustomPrefixQueuePageEnabled())
         configure(queuePanelOpenAtLaunchCheckbox, title: "Open Queue Page with new player windows", state: UserDefaults.standard.bool(forKey: Self.queuePanelOpenAtLaunchKey))
-        customPrefixQueuePageCheckbox.setAccessibilityIdentifier("settings.queue.enablePrefixRename")
         queuePanelOpenAtLaunchCheckbox.setAccessibilityIdentifier("settings.queue.openAtLaunch")
 
         customPrefixValueTextField.usesMonospacedFont = true
         customPrefixValueTextField.placeholderString = "e.g. x_"
-        customPrefixValueTextField.stringValue = Self.customPrefixValue()
+        customPrefixValueTextField.stringValue = Self.storedCustomPrefixValue()
         customPrefixValueTextField.delegate = self
-        customPrefixValueTextField.toolTip = "Primary prefix applied to filename stem. The N key and prefix button use this prefix. The \"/\" character is not allowed."
+        customPrefixValueTextField.toolTip = "Primary prefix added to the start of the filename. The N key, the queue's primary prefix chip and the rail's prefix button use it. The \"/\" character is not allowed."
         customPrefixValueTextField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         customPrefixValueTextField.setAccessibilityIdentifier("settings.queue.primaryPrefix")
 
         customPrefixSecondaryValueTextField.usesMonospacedFont = true
         customPrefixSecondaryValueTextField.placeholderString = "e.g. fav_"
-        customPrefixSecondaryValueTextField.stringValue = Self.customPrefixSecondaryValue()
+        customPrefixSecondaryValueTextField.stringValue = Self.storedCustomPrefixSecondaryValue()
         customPrefixSecondaryValueTextField.delegate = self
-        customPrefixSecondaryValueTextField.toolTip = "Secondary prefix. Available from the rename menu and the M key. Leave empty to use one prefix only. The \"/\" character is not allowed."
+        customPrefixSecondaryValueTextField.toolTip = "Secondary prefix. The M key, the queue's secondary prefix chip and the rail's second prefix button use it. Leave empty to use one prefix only. The \"/\" character is not allowed."
         customPrefixSecondaryValueTextField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         customPrefixSecondaryValueTextField.setAccessibilityIdentifier("settings.queue.secondaryPrefix")
 
         let section1 = buildSection(title: "Queue page rename", rows: [
-            buildRow(label: nil, control: customPrefixQueuePageCheckbox),
             buildRow(label: "Primary prefix", control: customPrefixValueTextField,
-                     helperText: "N and the prefix button apply this prefix. Format: prefix + filename stem + extension.",
+                     helperText: "N, the queue's primary prefix chip and the rail's prefix button apply this prefix. Format: prefix + filename stem + extension. Each prefix ends in exactly one underscore: keep, keep_ and keep__ all give keep_.",
                      swatch: PlayerTheme.current.markerPrimary),
             buildRow(label: "Secondary prefix", control: customPrefixSecondaryValueTextField,
-                     helperText: "Available from the rename menu and the M key. Leave empty to use one prefix only.",
+                     helperText: "M, the queue's secondary prefix chip and the rail's second prefix button apply this prefix. Leave empty to use one prefix only.",
                      swatch: PlayerTheme.current.markerSecondary)
         ])
 
@@ -871,9 +939,12 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         return stack
     }
 
+    /// `helperLabel` passes in a helper label the controller updates later; it is styled
+    /// the same as one built from `helperText`.
     private func buildRow(label: String?,
                           control: NSView,
                           helperText: String? = nil,
+                          helperLabel: NSTextField? = nil,
                           swatch: NSColor? = nil) -> NSView {
         let controlColumn = NSStackView()
         controlColumn.orientation = .vertical
@@ -882,8 +953,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         controlColumn.translatesAutoresizingMaskIntoConstraints = false
         controlColumn.addArrangedSubview(control)
 
-        if let helper = helperText {
-            let note = NSTextField(wrappingLabelWithString: helper)
+        if let note = helperLabel ?? helperText.map({ NSTextField(wrappingLabelWithString: $0) }) {
             note.font = .systemFont(ofSize: 11)
             note.textColor = DWBAppearance.shared.textTertiary
             note.isEditable = false
@@ -1071,12 +1141,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             DebugConsoleController.log("settings", "completeVideoWindowMode=\(enabled)")
             return
         }
-        if sender === customPrefixQueuePageCheckbox {
-            UserDefaults.standard.set(enabled, forKey: Self.customPrefixQueuePageKey)
-            NotificationCenter.default.post(name: .customPrefixRenameChanged, object: nil)
-            DebugConsoleController.log("settings", "customPrefixQueuePage=\(enabled)")
-            return
-        }
         if sender === showTitleOverlayCheckbox {
             UserDefaults.standard.set(enabled, forKey: Self.showTitleOverlayKey)
             NotificationCenter.default.post(name: .titleOverlaySettingChanged, object: nil)
@@ -1176,20 +1240,44 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         syncUIFromDefaults()
     }
 
+    /// Opacity is window-only: the slider and reset change the target window and store nothing.
     @objc private func windowOpacitySliderChanged(_ sender: NSSlider) {
-        let opacity = Self.clampedPlayerWindowOpacity(CGFloat(sender.doubleValue / 100.0))
-        Self.setDefaultPlayerWindowOpacity(opacity)
-        updateWindowOpacityControls(opacity)
-        targetPlayerWindowController()?.setWindowOpacityFromSettings(opacity)
-        DebugConsoleController.log("settings", "playerWindowOpacity=\(Self.playerWindowOpacityPercent(opacity))%")
+        setTargetWindowOpacity(CGFloat(sender.doubleValue / 100.0))
     }
 
     @objc private func resetWindowOpacity(_ sender: NSButton) {
-        let opacity = Self.defaultPlayerWindowOpacityValue
-        Self.setDefaultPlayerWindowOpacity(opacity)
+        setTargetWindowOpacity(Self.defaultPlayerWindowOpacityValue)
+    }
+
+    private func setTargetWindowOpacity(_ value: CGFloat) {
+        guard let target = targetPlayerWindowController() else {
+            syncTargetControls()
+            return
+        }
+        let opacity = Self.clampedPlayerWindowOpacity(value)
+        target.setWindowOpacityFromSettings(opacity)
         updateWindowOpacityControls(opacity)
-        targetPlayerWindowController()?.setWindowOpacityFromSettings(opacity)
-        DebugConsoleController.log("settings", "playerWindowOpacity=100%")
+        DebugConsoleController.log("settings", "windowOpacity: window=\(target.debugIdentity) value=\(Self.playerWindowOpacityPercent(opacity))%")
+    }
+
+    /// Volume is window-only like opacity; the window stores it as the new-window default (D-010).
+    @objc private func windowVolumeSliderChanged(_ sender: NSSlider) {
+        setTargetWindowVolume(VolumePolicy.volume(forSliderValue: sender.doubleValue))
+    }
+
+    @objc private func resetWindowVolume(_ sender: NSButton) {
+        setTargetWindowVolume(VolumePolicy.normalVolume)
+    }
+
+    private func setTargetWindowVolume(_ value: Int32) {
+        guard let target = targetPlayerWindowController() else {
+            syncTargetControls()
+            return
+        }
+        let volume = VolumePolicy.clamped(value)
+        target.setVolumeFromSettings(volume)
+        updateWindowVolumeControls(target.currentEffectiveVolume)
+        DebugConsoleController.log("settings", "windowVolume: window=\(target.debugIdentity) value=\(volume)%")
     }
 
     @objc private func restoreAllSettingsToDefault(_ sender: Any) {
@@ -1206,7 +1294,6 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     private func performRestoreSettingsDefaults() {
         Self.restoreSettingsDefaults()
         syncUIFromDefaults()
-        targetPlayerWindowController()?.setWindowOpacityFromSettings(Self.defaultPlayerWindowOpacityValue)
         DebugConsoleController.log("settings", "restoreDefaults")
     }
 
@@ -1233,13 +1320,31 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     }
 
     @objc private func settingsWindowDidBecomeKey(_ notification: Notification) {
-        syncWindowOpacityControlsFromTargetOrDefault()
-        syncPlaybackSpeedControlsFromTarget()
+        syncTargetControls()
+    }
+
+    @objc private func playerWindowTargetingDidChange(_ notification: Notification) {
+        syncTargetControls()
+    }
+
+    @objc private func settingsWindowVisibilityDidChange(_ notification: Notification) {
+        syncTargetControls()
+    }
+
+    @objc private func settingsWindowWillClose(_ notification: Notification) {
+        syncTargetControls(settingsClosing: true)
     }
 
     @objc private func playbackSpeedDidChange(_ notification: Notification) {
         guard window?.isVisible == true else { return }
         syncPlaybackSpeedControlsFromTarget()
+    }
+
+    @objc private func windowVolumeDidChange(_ notification: Notification) {
+        guard window?.isVisible == true,
+              let target = targetPlayerWindowController(),
+              notification.object as AnyObject? === target else { return }
+        updateWindowVolumeControls(target.currentEffectiveVolume)
     }
 
     @objc private func anyWindowDidBecomeKey(_ notification: Notification) {
@@ -1248,10 +1353,12 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
               window?.isVisible == true,
               becameKeyWin.windowController is PlayerWindowController else { return }
         window?.order(.above, relativeTo: becameKeyWin.windowNumber)
+        syncTargetControls()
     }
 
     @objc private func appDidBecomeActive(_ notification: Notification) {
         orderAbovePlayerWindows()
+        syncTargetControls()
     }
 
     private func orderAbovePlayerWindows() {
@@ -1265,9 +1372,8 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     // MARK: - Sync
 
     private func syncUIFromDefaults() {
-        customPrefixQueuePageCheckbox.state             = Self.isCustomPrefixQueuePageEnabled()    ? .on : .off
-        customPrefixValueTextField.stringValue          = Self.customPrefixValue()
-        customPrefixSecondaryValueTextField.stringValue = Self.customPrefixSecondaryValue()
+        customPrefixValueTextField.stringValue          = Self.storedCustomPrefixValue()
+        customPrefixSecondaryValueTextField.stringValue = Self.storedCustomPrefixSecondaryValue()
         autoHideTitlebarCheckbox.state         = Self.isAutoHideTitlebarEnabled()      ? .on : .off
         completeVideoWindowModeCheckbox.state  = Self.isCompleteVideoWindowModeEnabled() ? .on : .off
         showTitleOverlayCheckbox.state         = Self.isShowTitleOverlayEnabled()      ? .on : .off
@@ -1296,13 +1402,45 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         if chromeAutohideThresholdPopup.selectedItem == nil {
             chromeAutohideThresholdPopup.selectItem(withTag: Self.chromeThresholdTag(for: 3.0))
         }
-        syncWindowOpacityControlsFromTargetOrDefault()
+        syncTargetControls()
     }
 
-    private func syncWindowOpacityControlsFromTargetOrDefault() {
-        let opacity = targetPlayerWindowController()?.currentWindowOpacity
-            ?? Self.defaultPlayerWindowOpacity()
-        updateWindowOpacityControls(opacity)
+    /// Re-reads the target player window into the opacity and volume sliders and readouts,
+    /// the speed popup, the helper labels, the enabled states, and the target outline.
+    private func syncTargetControls(settingsClosing: Bool = false) {
+        let target = targetPlayerWindowController()
+        updateWindowOpacityControls(target?.currentWindowOpacity ?? Self.defaultPlayerWindowOpacityValue)
+        updateWindowVolumeControls(target?.currentEffectiveVolume ?? PlayerWindowController.defaultPersistedVolume())
+        syncPlaybackSpeedControlsFromTarget()
+
+        let helperText = PlayerWindowTargeting.settingsHelperText(targetTitle: target?.window?.title)
+        playbackSpeedTargetLabel.stringValue = helperText
+        windowOpacityTargetLabel.stringValue = helperText
+        windowVolumeTargetLabel.stringValue = helperText
+        let hasTarget = target != nil
+        windowOpacitySlider.isEnabled = hasTarget
+        windowOpacityResetButton.isEnabled = hasTarget
+        windowVolumeSlider.isEnabled = hasTarget
+        windowVolumeResetButton.isEnabled = hasTarget
+        playbackSpeedPopup.isEnabled = hasTarget
+
+        updateTargetOutline(target: isOnScreenForOutline(settingsClosing: settingsClosing) ? target : nil)
+    }
+
+    /// Settings shows the outline only while it is visible, not minimized, and not hidden
+    /// with the app (the panel hides when the app deactivates).
+    private func isOnScreenForOutline(settingsClosing: Bool) -> Bool {
+        guard !settingsClosing, let settingsWin = window,
+              settingsWin.isVisible, !settingsWin.isMiniaturized, !NSApp.isHidden else { return false }
+        return NSApp.isActive || !settingsWin.hidesOnDeactivate
+    }
+
+    private func updateTargetOutline(target: PlayerWindowController?) {
+        if outlinedPlayerWindowController !== target {
+            outlinedPlayerWindowController?.setSettingsTargetOutlineVisible(false)
+            outlinedPlayerWindowController = target
+        }
+        target?.setSettingsTargetOutlineVisible(true)
     }
 
     private func syncPlaybackSpeedControlsFromTarget() {
@@ -1318,17 +1456,17 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         windowOpacityPercentLabel.stringValue = "\(Self.playerWindowOpacityPercent(clamped))%"
     }
 
+    private func updateWindowVolumeControls(_ volume: Int32) {
+        let clamped = VolumePolicy.clamped(volume)
+        windowVolumeSlider.doubleValue = Double(clamped)
+        windowVolumePercentLabel.stringValue = VolumePolicy.percentText(clamped)
+    }
+
+    /// The on-screen player window that most recently became key (`PlayerWindowTargeting`).
     private func targetPlayerWindowController() -> PlayerWindowController? {
-        for window in NSApp.orderedWindows {
-            if window === self.window { continue }
-            guard window.isVisible,
-                  let wc = window.windowController as? PlayerWindowController else { continue }
-            return wc
-        }
-        if let appDelegate = NSApp.delegate as? AppDelegate {
-            return appDelegate.windowControllers.last { $0.window?.isVisible == true }
-        }
-        return nil
+        guard let controllers = (NSApp.delegate as? AppDelegate)?.windowControllers else { return nil }
+        let targetID = PlayerWindowTargeting.settingsTarget(windows: controllers.map { $0.targetingSnapshot() })
+        return controllers.first { ObjectIdentifier($0) == targetID }
     }
 
     // MARK: - NSTextFieldDelegate
@@ -1360,6 +1498,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         orderAbovePlayerWindows()
+        syncTargetControls()
     }
 
     func openAcceptSettings() {

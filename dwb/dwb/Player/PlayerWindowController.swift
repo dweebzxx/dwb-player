@@ -156,9 +156,25 @@ class PlayerWindowController: NSWindowController {
 
     // MARK: - Window opacity
 
-    /// Per-window opacity state. UserDefaults supplies only the launch/default value.
-    private var windowOpacity: CGFloat = SettingsWindowController.defaultPlayerWindowOpacity()
+    /// Per-window opacity state. Every new window starts at 100%; nothing is stored.
+    private var windowOpacity: CGFloat = SettingsWindowController.defaultPlayerWindowOpacityValue
     var currentWindowOpacity: CGFloat { windowOpacity }
+
+    // MARK: - Dock and Settings targeting
+
+    private static var nextTargetingStamp: UInt64 = 0
+    private static func makeTargetingStamp() -> UInt64 {
+        nextTargetingStamp += 1
+        return nextTargetingStamp
+    }
+    /// Order stamps read by the Dock reopen and Settings target choices.
+    private var lastKeyStamp: UInt64 = 0
+    private var minimizeStamp: UInt64?
+    /// Outline shown while this window is the Settings target and Settings is on screen.
+    private let settingsTargetOutline = SettingsTargetOutlineView()
+    private var isSettingsTargetOutlineRequested = false
+    /// Set in windowWillClose. A closed window starts no playback and takes no sleep assertion.
+    private var isWindowClosed = false
 
     // MARK: - Sleep prevention
 
@@ -240,6 +256,12 @@ class PlayerWindowController: NSWindowController {
               url.isFileURL,
               playbackSet[currentSetIndex].standardizedFileURL.path == url.standardizedFileURL.path else {
             return false
+        }
+
+        // P142: a file on a non-local volume is never checked on the main thread. Rename is
+        // unavailable until the background read has finished.
+        if VolumeClassifier.shared.kind(for: url) == .nonLocal {
+            return nonLocalFiles.existsAsFile(url)
         }
 
         var isDirectory: ObjCBool = false
@@ -352,10 +374,14 @@ class PlayerWindowController: NSWindowController {
     /// container truncated mid-playback) can leave VLC reporting .playing/.buffering forever
     /// without ever emitting .error or .ended, so nothing else in the completion watchdog can
     /// ever fire for it.
-    private var lastSteadyPlaybackPosition: Float = -1
-    private var lastSteadyPlaybackTimeMs: Int = -1
-    private var lastSteadyPlaybackAdvanceMT: TimeInterval = 0
-    private let midPlaybackStallToleranceSeconds: TimeInterval = 4.0
+    private var midPlaybackStallClock = MidPlaybackStallClock()
+    /// P142: the volume kind of the current item, set when it starts. Picks the stall tolerance.
+    private var currentItemVolumeKind: VolumeKind = .local
+    private var lastUpdateTickMT: TimeInterval = 0
+    /// A gap between two ticks of the 0.25 s update timer longer than this is logged.
+    private let mainThreadGapLogSeconds: TimeInterval = 2
+    /// A modal panel pauses every window's update timer; the gap it leaves is not a stall.
+    private static var lastModalReturnMT: TimeInterval = 0
 
     /// Position captured on the VLC callback thread at the moment the .ended event fires.
     /// More reliable than capturedPosition at .stopped time because VLC hasn't reset it yet.
@@ -393,6 +419,9 @@ class PlayerWindowController: NSWindowController {
         var progressRetryCount: Int
         var sawPlaying: Bool
         var recoveryUsed: Bool
+        /// P142: volume of the expected file, and when its start window began (`play()` or rebuild).
+        let volume: VolumeKind
+        var windowStartMT: TimeInterval
     }
 
     private var playbackStartHandshake: PlaybackStartHandshake? = nil
@@ -413,6 +442,21 @@ class PlayerWindowController: NSWindowController {
     /// Set to "–:––" as a placeholder before the async fetch to prevent re-fetching.
     private var durationCache: [URL: String] = [:]
     private var durationSecondsCache: [URL: Double] = [:]
+
+    // P142: files on non-local volumes. Size and existence are read off the main thread.
+    // P142.1: their durations are never probed; each comes from the length VLC reports when the
+    // file plays, stored once per queue.
+    private lazy var nonLocalFiles: NonLocalFileMetadataStore = {
+        let store = NonLocalFileMetadataStore()
+        store.onBatch = { [weak self] in self?.nonLocalFactsDidArrive() }
+        return store
+    }()
+    private var reportedDurations = ReportedDurationLedger()
+    /// P138: intrinsic GIF loop durations for this window's queue, scanned off the main thread.
+    private let gifDurations = GIFDurationStore()
+    /// P138: the latest large intake's GIF duration loading, shown on the intake card.
+    private var gifIntakeProgress: GIFDurationIntakeProgress?
+    private var intakeScanningFolderCount = 1
     private var currentDurationIsProvisional = false
     private var queueSortMode: QueueSortMode = .manual
     /// A rename updates metadata without becoming an implicit user sort action.
@@ -463,6 +507,9 @@ class PlayerWindowController: NSWindowController {
     private var windowVolume: Int32 = PlayerWindowController.defaultPersistedVolume()
     private var windowMuted = false
     private var lastAppliedAudioState: (volume: Int32, muted: Bool)?
+    /// P137: armed right before a start that can create a new audio output (which may begin at
+    /// another window's volume); consumed by the first `.playing` for that start.
+    private var audioReassertPending = false
 
     // MARK: - Per-window audio sync offset (Bluetooth-latency compensation)
 
@@ -489,6 +536,13 @@ class PlayerWindowController: NSWindowController {
         startUpdateTimer()
         observeSettings()
         applyLaunchDefaults()
+        gifDurations.onResolved = { [weak self] url, result in
+            self?.acceptQueuedGIFDuration(url: url, result: result)
+        }
+    }
+
+    deinit {
+        DebugConsoleController.log("window", "released: window=\(debugIdentity)")
     }
 
     required init?(coder: NSCoder) {
@@ -538,7 +592,6 @@ class PlayerWindowController: NSWindowController {
         queuePage = QueuePageView(frame: .zero)
         queuePage.delegate = self
         queuePage.isHidden = true
-        queuePage.isCustomPrefixRenameEnabled = SettingsWindowController.isCustomPrefixQueuePageEnabled()
         queuePage.isUndoAvailable = markerRenameUndoState.canUndo
         cv.addSubview(queuePage)
 
@@ -565,6 +618,10 @@ class PlayerWindowController: NSWindowController {
 
         // Drop zone covers the video area while a valid drag is over it.
         cv.addSubview(dropZoneOverlay)
+
+        // Settings target outline sits above everything and passes all mouse events through.
+        settingsTargetOutline.frame = cv.bounds
+        cv.addSubview(settingsTargetOutline)
 
         self.window = win
         win.delegate = self
@@ -609,6 +666,45 @@ class PlayerWindowController: NSWindowController {
         window?.representedURL = currentMediaURL
         window?.titleVisibility = .hidden
         centeredTitleLabel.stringValue = title
+        postTargetingChanged()
+    }
+
+    // MARK: - Dock and Settings targeting
+
+    /// A plain snapshot for `PlayerWindowTargeting`. With `treatHiddenAsOnScreen`, a window
+    /// that is only off screen because the app is hidden counts as on screen.
+    func targetingSnapshot(treatHiddenAsOnScreen: Bool = false) -> PlayerWindowTargeting.WindowSnapshot<ObjectIdentifier> {
+        let isMinimized = window?.isMiniaturized == true
+        let isVisible = window?.isVisible == true || (treatHiddenAsOnScreen && window != nil)
+        return PlayerWindowTargeting.WindowSnapshot(
+            id: ObjectIdentifier(self),
+            isOnScreen: isVisible && !isMinimized && !isWindowClosed,
+            isMinimized: isMinimized && !isWindowClosed,
+            lastKeyStamp: lastKeyStamp,
+            minimizeStamp: isMinimized ? minimizeStamp : nil
+        )
+    }
+
+    /// Called by Settings. The outline also stays hidden in fullscreen.
+    func setSettingsTargetOutlineVisible(_ visible: Bool) {
+        guard visible != isSettingsTargetOutlineRequested else { return }
+        isSettingsTargetOutlineRequested = visible
+        updateSettingsTargetOutline()
+        DebugConsoleController.log("window", "settingsTargetOutline: window=\(debugIdentity) visible=\(visible)")
+    }
+
+    private func updateSettingsTargetOutline() {
+        let show = isSettingsTargetOutlineRequested && !isWindowClosed
+            && !isFullscreen && !isEnteringFullscreen && !isExitingFullscreen
+        if show, let cv = window?.contentView, cv.subviews.last !== settingsTargetOutline {
+            settingsTargetOutline.frame = cv.bounds
+            cv.addSubview(settingsTargetOutline, positioned: .above, relativeTo: nil)
+        }
+        settingsTargetOutline.isHidden = !show
+    }
+
+    private func postTargetingChanged() {
+        NotificationCenter.default.post(name: .playerWindowTargetingChanged, object: self)
     }
 
     private func applyLaunchDefaults() {
@@ -681,12 +777,6 @@ class PlayerWindowController: NSWindowController {
             self,
             selector: #selector(titleOverlaySettingDidChange),
             name: .titleOverlaySettingChanged,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(customPrefixRenameSettingDidChange),
-            name: .customPrefixRenameChanged,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -838,38 +928,133 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("settings", "titleOverlay=\(configuredShowTitleOverlay)")
     }
 
-    @objc private func customPrefixRenameSettingDidChange() {
-        queuePage.isCustomPrefixRenameEnabled = SettingsWindowController.isCustomPrefixQueuePageEnabled()
-    }
-
     @objc private func customPrefixValueDidChange() {
         if isQueuePageOpen { refreshQueuePage() }
     }
 
+    /// Active-playback duration. Reuses an already-resolved GIF result; otherwise keeps
+    /// the existing synchronous scan for this one item and records it for the queue.
     private func configuredImageDurationMetadata(for url: URL) -> MediaFileSupport.DurationMetadata {
         if MediaFileSupport.isGIF(url) {
-            if let metadata = MediaFileSupport.gifPlaybackMetadata(for: url, loopCount: configuredGIFLoopCount) {
-                gifDurationFallbackLoggedPaths.remove(url.path)
-                return MediaFileSupport.DurationMetadata(seconds: metadata.totalPlaybackDurationSeconds,
-                                                         displayString: MediaFileSupport.formatPlaybackDuration(metadata.totalPlaybackDurationSeconds))
+            let result: GIFLoopDuration
+            if let cached = gifDurations.resolvedResult(for: url) {
+                result = cached
+            } else {
+                result = GIFLoopDuration(MediaFileSupport.gifPlaybackMetadata(for: url, loopCount: configuredGIFLoopCount))
+                gifDurations.record(result, for: url)
+                updateGIFIntakeProgress { $0.finish(GIFDurationStore.key(for: url)) }
             }
-            if gifDurationFallbackLoggedPaths.insert(url.path).inserted {
-                DebugConsoleController.log(level: .error,
-                                           category: "media",
-                                           message: "gif duration fallback: \(url.lastPathComponent) loops=\(configuredGIFLoopCount)")
-            }
-            let fallback = MediaFileSupport.fallbackGIFPlaybackDurationSeconds(loopCount: configuredGIFLoopCount)
-            return MediaFileSupport.DurationMetadata(seconds: fallback,
-                                                     displayString: MediaFileSupport.formatPlaybackDuration(fallback))
+            noteGIFDurationOutcome(url: url, result: result)
+            return result.durationMetadata(loopCount: configuredGIFLoopCount)
         }
 
-        return MediaFileSupport.DurationMetadata(seconds: configuredImageDurationSeconds,
-                                                 displayString: MediaFileSupport.formatShortDuration(configuredImageDurationSeconds))
+        return stillImageDurationMetadata()
+    }
+
+    private func stillImageDurationMetadata() -> MediaFileSupport.DurationMetadata {
+        MediaFileSupport.DurationMetadata(seconds: configuredImageDurationSeconds,
+                                          displayString: MediaFileSupport.formatShortDuration(configuredImageDurationSeconds))
+    }
+
+    private func noteGIFDurationOutcome(url: URL, result: GIFLoopDuration) {
+        guard result == .unreadable else {
+            gifDurationFallbackLoggedPaths.remove(url.path)
+            return
+        }
+        if gifDurationFallbackLoggedPaths.insert(url.path).inserted {
+            DebugConsoleController.log(level: .error,
+                                       category: "media",
+                                       message: "gif duration fallback: \(url.lastPathComponent) loops=\(configuredGIFLoopCount)")
+        }
+    }
+
+    /// Queue-facing image duration: never scans a GIF on the main thread. An unresolved
+    /// GIF projects to "Loading..." with no seconds (unknown for totals and sorting).
+    private func queueImageDurationMetadata(for url: URL) -> MediaFileSupport.DurationMetadata {
+        guard MediaFileSupport.isGIF(url) else { return stillImageDurationMetadata() }
+        switch gifDurations.lookup(url) {
+        case .resolved(let result):
+            return result.durationMetadata(loopCount: configuredGIFLoopCount)
+        case .pending:
+            return MediaFileSupport.DurationMetadata(seconds: nil,
+                                                     displayString: MediaFileSupport.durationLoadingText)
+        }
+    }
+
+    /// Background GIF scans accepted by the store, applied together on the next main-queue
+    /// turn so a large queue gets one cache pass and one sort/refresh per batch.
+    private var pendingGIFDurationAcceptances: [(url: URL, result: GIFLoopDuration)] = []
+    private var gifResultsSinceQueueRefresh = 0
+
+    /// Main-thread acceptance of a background GIF scan. Updates queue metadata only;
+    /// never touches the active item's timer or advances the queue.
+    private func acceptQueuedGIFDuration(url: URL, result: GIFLoopDuration) {
+        guard !isWindowClosed else { return }
+        pendingGIFDurationAcceptances.append((url, result))
+        guard pendingGIFDurationAcceptances.count == 1 else { return }
+        DispatchQueue.main.async { [weak self] in self?.flushAcceptedGIFDurations() }
+    }
+
+    private func flushAcceptedGIFDurations() {
+        let batch = pendingGIFDurationAcceptances
+        pendingGIFDurationAcceptances.removeAll()
+        guard !isWindowClosed, !batch.isEmpty else { return }
+        var applied = 0
+        var finishedKeys: [String] = []
+        defer { if !finishedKeys.isEmpty { updateGIFIntakeProgress { p in finishedKeys.forEach { p.finish($0) } } } }
+        for (url, result) in batch {
+            if gifIntakeProgress != nil { finishedKeys.append(GIFDurationStore.key(for: url)) }
+            // The store drops entries on clear/remove/replace/rename, so a result that is
+            // no longer current there was invalidated after acceptance; skip it.
+            guard gifDurations.resolvedResult(for: url) == result else { continue }
+            noteGIFDurationOutcome(url: url, result: result)
+            updateDurationCache(for: url, metadata: result.durationMetadata(loopCount: configuredGIFLoopCount))
+            applied += 1
+        }
+        gifResultsSinceQueueRefresh += applied
+        guard GIFDurationRefreshPolicy.shouldRefresh(acceptedSinceRefresh: gifResultsSinceQueueRefresh,
+                                                     pendingCount: gifDurations.pendingCount) else { return }
+        gifResultsSinceQueueRefresh = 0
+        if queueSortMode == .durationAscending || queueSortMode == .durationDescending {
+            applyQueueSortIfNeeded(reason: "gif-duration-metadata-update")
+        } else if isQueuePageOpen {
+            refreshQueuePage()
+        }
+    }
+
+    /// Starts card-tracked GIF duration loading for a large intake. Every GIF the intake
+    /// added is requested in the background now rather than when Queue first opens.
+    private func beginGIFIntakeProgress(for media: [URL]) {
+        var keys = Set<String>()
+        for url in media where MediaFileSupport.isGIF(url) {
+            if gifDurations.lookup(url) == .pending { keys.insert(GIFDurationStore.key(for: url)) }
+        }
+        guard keys.count >= GIFDurationIntakeProgress.minimumTrackedCount else { return }
+        gifIntakeProgress = GIFDurationIntakeProgress(keys: keys)
+        intakeRecoveryRetryContext = nil
+        intakeRecoverySourceURLs = []
+        DebugConsoleController.log("queue", "intakeRecovery: loading gifDurations=\(keys.count)")
+        updateGIFIntakeProgress { _ in }
+    }
+
+    /// Applies `change`, then shows the new count or dismisses the finished card.
+    private func updateGIFIntakeProgress(_ change: (inout GIFDurationIntakeProgress) -> Void) {
+        guard var progress = gifIntakeProgress else { return }
+        change(&progress)
+        if progress.isComplete {
+            DebugConsoleController.log("queue", "intakeRecovery: gifDurations done total=\(progress.total)")
+            clearIntakeRecovery()
+            layoutPlayerViews()
+            return
+        }
+        gifIntakeProgress = progress
+        intakeRecoveryView.present(.loadingGIFDurations(finished: progress.finished, total: progress.total))
+        layoutPlayerViews()
     }
 
     private func refreshConfiguredImageDurations() {
         for url in playbackSet where MediaFileSupport.isImage(url) {
-            let metadata = configuredImageDurationMetadata(for: url)
+            let metadata = queueImageDurationMetadata(for: url)
             updateDurationCache(for: url, metadata: metadata)
         }
     }
@@ -882,60 +1067,33 @@ class PlayerWindowController: NSWindowController {
         needsTransportUpdate = true
     }
 
-    // MARK: - Custom prefix rename (video-page)
+    // MARK: - Prefix actions (keys, rail buttons)
 
-    func performCustomPrefixRenameCurrentItem(source: String = "videoPage") {
-        guard canRenameCurrentMedia else { return }
-        guard currentSetIndex >= 0, currentSetIndex < playbackSet.count else { return }
-        let primary   = SettingsWindowController.customPrefixValue()
-        let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        guard !primary.isEmpty else {
-            DebugConsoleController.log("rename", "customPrefix: noop (empty prefix) source=\(source)")
-            return
-        }
-        let url = playbackSet[currentSetIndex]
-        guard let newName = MediaFileSupport.calculatePrefixTransition(
-            originalURL: url, primary: primary, secondary: secondary, invokedPrimary: true
-        ) else {
-            DebugConsoleController.log("rename", "customPrefix: noop (no change) file=\(url.lastPathComponent) source=\(source)")
-            return
-        }
-        DebugConsoleController.log("rename", "customPrefix: \(url.lastPathComponent) → \(newName) source=\(source)")
-        if renameFile(at: currentSetIndex, to: newName) {
-            recordMarkerRename(entries: [
-                MarkerRenameUndoEntry(
-                    originalURL: url,
-                    renamedURL: url.deletingLastPathComponent().appendingPathComponent(newName)
-                )
-            ])
+    /// The one entry point for the `N`, `M` and `R` keys and the rail prefix buttons. `N` and `M`
+    /// act on the same targets as the queue footer chips: the selected queue rows, or the
+    /// current item when nothing is selected or the Queue Page is closed. `R` opens the rename
+    /// sheet for the one selected row, else for the current file.
+    func performPrefixAction(_ action: PrefixKeyRouting.Action, source: String) {
+        switch action {
+        case .primaryPrefix:
+            DebugConsoleController.log("rename", "prefixAction: primary source=\(source)")
+            applyPrefix(indices: prefixTargetDisplayIndices(), invokedPrimary: true)
+        case .secondaryPrefix:
+            DebugConsoleController.log("rename", "prefixAction: secondary source=\(source)")
+            applyPrefix(indices: prefixTargetDisplayIndices(), invokedPrimary: false)
+        case .rename:
+            let selected = isQueuePageOpen ? queuePage.selectedDisplayIndices() : []
+            if let row = PrefixKeyRouting.selectedRenameRow(selectedDisplayIndices: selected) {
+                showRenameSheet(forDisplayIndex: row)
+            } else {
+                showRenameSheet()
+            }
         }
     }
 
-    func performSecondaryCustomPrefixRenameCurrentItem(source: String = "videoPage") {
-        guard canRenameCurrentMedia else { return }
-        guard currentSetIndex >= 0, currentSetIndex < playbackSet.count else { return }
-        let primary   = SettingsWindowController.customPrefixValue()
-        let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        guard !secondary.isEmpty else {
-            DebugConsoleController.log("rename", "customPrefixSecondary: noop (empty prefix) source=\(source)")
-            return
-        }
-        let url = playbackSet[currentSetIndex]
-        guard let newName = MediaFileSupport.calculatePrefixTransition(
-            originalURL: url, primary: primary, secondary: secondary, invokedPrimary: false
-        ) else {
-            DebugConsoleController.log("rename", "customPrefixSecondary: noop (no change) file=\(url.lastPathComponent) source=\(source)")
-            return
-        }
-        DebugConsoleController.log("rename", "customPrefixSecondary: \(url.lastPathComponent) → \(newName) source=\(source)")
-        if renameFile(at: currentSetIndex, to: newName) {
-            recordMarkerRename(entries: [
-                MarkerRenameUndoEntry(
-                    originalURL: url,
-                    renamedURL: url.deletingLastPathComponent().appendingPathComponent(newName)
-                )
-            ])
-        }
+    private func prefixTargetDisplayIndices() -> [Int] {
+        if isQueuePageOpen { return queuePage.prefixTargetDisplayIndices() }
+        return [currentDisplayIndex]
     }
 
     // MARK: - Layout
@@ -1214,7 +1372,9 @@ class PlayerWindowController: NSWindowController {
         panel.allowedContentTypes = MediaFileSupport.supportedContentTypes(
             acceptedKinds: SettingsWindowController.acceptedMediaKinds()
         )
-        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let response = panel.runModal()
+        Self.lastModalReturnMT = CACurrentMediaTime()
+        guard response == .OK, !panel.urls.isEmpty else { return }
         handleDroppedURLs(panel.urls, appendingExplicitFiles: false)
     }
 
@@ -1226,7 +1386,11 @@ class PlayerWindowController: NSWindowController {
     private func openAndPlay(set: [URL], randomizeShuffleStart: Bool = false) {
         guard !set.isEmpty else { return }
         DebugConsoleController.log("queue", "openReplace: count=\(set.count)")
+        noteQueueLoaded(set, replacing: true)
         playbackSet     = set
+        let replacementPaths = Set(set.map { $0.standardizedFileURL.path })
+        gifDurations.retain(paths: replacementPaths)
+        updateGIFIntakeProgress { $0.retain(paths: replacementPaths) }
         displayOrder    = Array(0..<set.count)
         pendingPlayNextSetIndices.removeAll()
         currentDisplayIndex = 0
@@ -1248,6 +1412,7 @@ class PlayerWindowController: NSWindowController {
     private func appendToQueue(files: [URL], randomizeShuffleStart: Bool = false) {
         guard !files.isEmpty else { return }
         let wasEmpty = playbackSet.isEmpty || displayOrder.isEmpty || currentDisplayIndex < 0
+        noteQueueLoaded(files, replacing: wasEmpty)
         let start = playbackSet.count
         playbackSet.append(contentsOf: files)
 
@@ -1603,6 +1768,9 @@ class PlayerWindowController: NSWindowController {
 
     private func queueFileSizeSortKey(for url: URL?) -> Int64 {
         guard let url else { return 0 }
+        if VolumeClassifier.shared.kind(for: url) == .nonLocal {
+            return nonLocalFiles.sizeSortKey(for: url)   // cached; 0 until the background read lands
+        }
         return MediaFileSupport.fileSizeBytes(for: url) ?? 0
     }
 
@@ -1696,48 +1864,136 @@ class PlayerWindowController: NSWindowController {
         var playNextPositions: [Int: Int] = [:]
         for (offset, setIndex) in pendingPlayNextSetIndices.enumerated() { playNextPositions[setIndex] = offset + 1 }
 
+        var nonLocalURLs: [URL] = []
+
         for (displayIndex, url) in urls.enumerated() {
-            let size = MediaFileSupport.fileSizeString(for: url)
+            let isNonLocal = VolumeClassifier.shared.kind(for: url) == .nonLocal
+            let size: String
+            if isNonLocal {
+                size = nonLocalFiles.sizeString(for: url)
+                nonLocalURLs.append(url)
+            } else {
+                size = MediaFileSupport.fileSizeString(for: url)
+            }
             let dur: String
             if MediaFileSupport.isImage(url) {
-                let metadata = configuredImageDurationMetadata(for: url)
+                let metadata = queueImageDurationMetadata(for: url)
                 updateDurationCache(for: url, metadata: metadata)
                 dur = metadata.displayString
             } else if let cached = durationCache[url] {
                 dur = cached
             } else {
-                // Set placeholder to prevent re-triggering; kick off async fetch.
-                let placeholder = MediaFileSupport.needsStableDuration(url)
+                // Set placeholder to prevent re-triggering; kick off async fetch. A non-local
+                // file is never probed (P142.1): it shows `--:--` until VLC reports its length.
+                let mayProbe = mayStartDurationProbe(for: url, volume: isNonLocal ? .nonLocal : .local)
+                let placeholder = mayProbe && MediaFileSupport.needsStableDuration(url)
                     ? MediaFileSupport.durationLoadingText
                     : MediaFileSupport.durationUnknownText
                 durationCache[url] = placeholder
-                let capturedURL = url
-                MediaFileSupport.loadDurationMetadata(for: url) { [weak self] metadata in
-                    guard let self = self else { return }
-                    self.updateDurationCache(for: capturedURL, metadata: metadata)
-                    if self.queueSortMode == .durationAscending || self.queueSortMode == .durationDescending {
-                        self.applyQueueSortIfNeeded(reason: "duration-metadata-update")
-                    } else if self.isQueuePageOpen {
-                        self.refreshQueuePage()
+                if mayProbe {
+                    let capturedURL = url
+                    MediaFileSupport.loadDurationMetadata(for: url) { [weak self] metadata in
+                        guard let self = self else { return }
+                        self.updateDurationCache(for: capturedURL, metadata: metadata)
+                        if self.queueSortMode == .durationAscending || self.queueSortMode == .durationDescending {
+                            self.applyQueueSortIfNeeded(reason: "duration-metadata-update")
+                        } else if self.isQueuePageOpen {
+                            self.refreshQueuePage()
+                        }
                     }
                 }
                 dur = placeholder
             }
-            qItems.append(QueuePageView.Item(
-                url: url,
-                displayName: url.lastPathComponent,
-                duration: dur,
-                fileSize: size,
-                isBookmarked: BookmarkStore.shared.isBookmarked(url: url),
-                isFailed: failedPlaybackPaths.contains(url.standardizedFileURL.path),
-                playNextPosition: displayIndex < displayOrder.count ? playNextPositions[displayOrder[displayIndex]] : nil
-            ))
+            qItems.append(queueItem(for: url, displayIndex: displayIndex, duration: dur, size: size,
+                                    playNextPositions: playNextPositions))
         }
+
+        if !nonLocalURLs.isEmpty { nonLocalFiles.request(nonLocalURLs) }
 
         queuePage.update(items: qItems,
                          currentIndex: currentDisplayIndex,
                          sortMode: queueSortMode,
                          totalDurationText: queueTotalDurationText(for: urls))
+    }
+
+    private func queueItem(for url: URL,
+                           displayIndex: Int,
+                           duration: String,
+                           size: String,
+                           playNextPositions: [Int: Int]) -> QueuePageView.Item {
+        QueuePageView.Item(
+            url: url,
+            displayName: url.lastPathComponent,
+            duration: duration,
+            fileSize: size,
+            isBookmarked: BookmarkStore.shared.isBookmarked(url: url),
+            isFailed: failedPlaybackPaths.contains(url.standardizedFileURL.path),
+            playNextPosition: displayIndex < displayOrder.count ? playNextPositions[displayOrder[displayIndex]] : nil
+        )
+    }
+
+    // MARK: - Non-local volumes (P142)
+
+    /// A batch of size and existence reads finished: rename may have become available, and the
+    /// queue page shows the new sizes. Once per batch, never once per file.
+    private func nonLocalFactsDidArrive() {
+        guard !isWindowClosed else { return }
+        transport.update()
+        if queueSortMode == .fileSizeAscending || queueSortMode == .fileSizeDescending {
+            applyQueueSortIfNeeded(reason: "size-metadata-update")
+        } else if isQueuePageOpen {
+            refreshQueuePage()
+        }
+    }
+
+    /// A queue was loaded or replaced with `urls`: stale non-local state is dropped, and the
+    /// load is logged once when any file is on a non-local volume.
+    private func noteQueueLoaded(_ urls: [URL], replacing: Bool) {
+        VolumeClassifier.shared.refresh()
+        let nonLocal = urls.filter { VolumeClassifier.shared.kind(for: $0) == .nonLocal }
+        if replacing {
+            let keep = Set(urls.map { NonLocalFileMetadataStore.key(for: $0) })
+            nonLocalFiles.retain(paths: keep)
+            reportedDurations.removeAll()
+        }
+        guard let first = nonLocal.first else { return }
+        DebugConsoleController.log("volume", "non-local: path=\(first.deletingLastPathComponent().lastPathComponent) items=\(nonLocal.count)")
+    }
+
+    /// Player starts a duration probe (an `AVURLAsset` load or a VLC parse) only for a local file.
+    private func mayStartDurationProbe(for url: URL, volume: VolumeKind) -> Bool {
+        let fileKind: DurationProbePolicy.FileKind
+        if MediaFileSupport.isImage(url) {
+            fileKind = .imageOrGIF
+        } else if MediaFileSupport.needsStableDuration(url) {
+            fileKind = .mpg
+        } else {
+            fileKind = .video
+        }
+        return DurationProbePolicy.mayStartProbe(volume: volume, fileKind: fileKind)
+    }
+
+    /// VLC reported `lengthMs` for the playing item. For a non-local item the first positive
+    /// length becomes its duration: stored once, shown on the transport and in its queue row.
+    /// Called from the existing progress snapshot; nothing here polls.
+    private func noteVLCReportedLength(_ lengthMs: Int) {
+        guard currentItemVolumeKind == .nonLocal, !currentItemIsImage, !isWindowClosed,
+              let url = currentMediaURL,
+              player.media?.url?.standardizedFileURL.path == url.standardizedFileURL.path,
+              reportedDurations.accept(lengthMs: lengthMs, for: NonLocalFileMetadataStore.key(for: url))
+        else { return }
+        let seconds = Double(lengthMs) / 1000.0
+        let metadata = MediaFileSupport.DurationMetadata(seconds: seconds,
+                                                         displayString: MediaFileSupport.formatDuration(seconds))
+        updateDurationCache(for: url, metadata: metadata)
+        currentDurationIsProvisional = false
+        transport.update()
+        DebugConsoleController.log("volume", "duration: \(url.lastPathComponent) \(metadata.displayString) from=player")
+        if queueSortMode == .durationAscending || queueSortMode == .durationDescending {
+            applyQueueSortIfNeeded(reason: "duration-metadata-update")
+        } else if isQueuePageOpen {
+            refreshQueuePage()
+        }
     }
 
     // MARK: - Reveal in Finder
@@ -1831,6 +2087,10 @@ class PlayerWindowController: NSWindowController {
         queueEndedNaturally          = false
         durationCache.removeAll()
         durationSecondsCache.removeAll()
+        reportedDurations.removeAll()
+        nonLocalFiles.removeAll()
+        gifDurations.removeAll()
+        updateGIFIntakeProgress { $0.retain(paths: []) }
         queueSortMode                = .manual
 
         updateWindowTitle(Self.defaultWindowTitle)
@@ -1854,6 +2114,13 @@ class PlayerWindowController: NSWindowController {
         playbackSet.remove(at: removedSetIndex)
         durationCache.removeValue(forKey: removedURL)
         durationSecondsCache.removeValue(forKey: removedURL)
+        let removedPath = removedURL.standardizedFileURL.path
+        if !playbackSet.contains(where: { $0.standardizedFileURL.path == removedPath }) {
+            reportedDurations.forget(NonLocalFileMetadataStore.key(for: removedURL))
+            nonLocalFiles.invalidate(removedURL)
+            gifDurations.invalidate(removedURL)
+            updateGIFIntakeProgress { $0.finish(removedPath) }
+        }
         displayOrder = displayOrder.map { $0 > removedSetIndex ? $0 - 1 : $0 }
         PlayNextChainPolicy.onQueueItemRemoved(
             removedSetIndex: removedSetIndex,
@@ -1957,6 +2224,12 @@ class PlayerWindowController: NSWindowController {
         if let cachedSeconds = durationSecondsCache.removeValue(forKey: oldURL) {
             durationSecondsCache[newURL] = cachedSeconds
         }
+        gifDurations.move(from: oldURL, to: newURL)
+        updateGIFIntakeProgress { $0.finish(GIFDurationStore.key(for: oldURL)) }
+        reportedDurations.move(from: NonLocalFileMetadataStore.key(for: oldURL),
+                               to: NonLocalFileMetadataStore.key(for: newURL))
+        nonLocalFiles.invalidate(oldURL)
+        if VolumeClassifier.shared.kind(for: newURL) == .nonLocal { nonLocalFiles.request([newURL]) }
 
         if currentMediaURL?.standardizedFileURL.path == oldURL.standardizedFileURL.path {
             currentMediaURL = newURL
@@ -2051,6 +2324,7 @@ class PlayerWindowController: NSWindowController {
         sourceURLs: [URL],
         retryContext: IntakeRecoveryRetryContext?
     ) {
+        gifIntakeProgress = nil
         intakeRecoverySourceURLs = sourceURLs
         intakeRecoveryRetryContext = retryContext
         intakeRecoveryView.present(MediaIntakeRecoveryMapper.presentation(for: failure))
@@ -2063,14 +2337,32 @@ class PlayerWindowController: NSWindowController {
         sourceURLs: [URL],
         retryContext: IntakeRecoveryRetryContext
     ) {
+        gifIntakeProgress = nil
+        intakeScanningFolderCount = max(1, folderCount)
         intakeRecoverySourceURLs = sourceURLs
         intakeRecoveryRetryContext = retryContext
-        intakeRecoveryView.present(.scanning(folderCount: max(1, folderCount)))
+        intakeRecoveryView.present(.scanning(folderCount: intakeScanningFolderCount))
         layoutPlayerViews()
         DebugConsoleController.log("queue", "intakeRecovery: scanning folders=\(folderCount)")
     }
 
+    /// Made on main; the scanner calls it on its own thread. Counts hop back to main and are
+    /// ignored once that scan is superseded, cancelled, or finished.
+    private func makeIntakeScanFoundReporter(generation: UInt64) -> (Int) -> Void {
+        { [weak self] count in
+            DispatchQueue.main.async {
+                self?.showIntakeScanFound(count, generation: generation)
+            }
+        }
+    }
+
+    private func showIntakeScanFound(_ count: Int, generation: UInt64) {
+        guard folderScanGeneration == generation, folderScanTask != nil else { return }
+        intakeRecoveryView.present(.scanning(folderCount: intakeScanningFolderCount, foundCount: count))
+    }
+
     private func clearIntakeRecovery() {
+        gifIntakeProgress = nil
         intakeRecoveryRetryContext = nil
         intakeRecoverySourceURLs = []
         intakeRecoveryView.dismiss()
@@ -2109,7 +2401,23 @@ class PlayerWindowController: NSWindowController {
             locateRecoverySource()
         case .showDetails:
             break // Expanded locally by IntakeRecoveryView.
+        case .cancelIntake:
+            cancelIntakeFromCard()
         }
+    }
+
+    /// Cancel on the progress card: a running scan stops with the queue unchanged; GIF
+    /// loading stops for the intake's remaining files, which load again when Queue shows them.
+    private func cancelIntakeFromCard() {
+        if folderScanTask != nil {
+            cancelPendingFolderScan()
+            DebugConsoleController.log("queue", "intakeRecovery: scan cancelled")
+        } else if let progress = gifIntakeProgress {
+            gifDurations.cancelPending(keys: progress.remaining)
+            DebugConsoleController.log("queue", "intakeRecovery: gifDurations cancelled remaining=\(progress.remaining.count)")
+        }
+        clearIntakeRecovery()
+        layoutPlayerViews()
     }
 
     private func locateRecoverySource() {
@@ -2118,7 +2426,9 @@ class PlayerWindowController: NSWindowController {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let response = panel.runModal()
+        Self.lastModalReturnMT = CACurrentMediaTime()
+        guard response == .OK, !panel.urls.isEmpty else { return }
 
         switch intakeRecoveryRetryContext {
         case .intake(_, let appendingExplicitFiles, let isDragDrop):
@@ -2220,13 +2530,15 @@ class PlayerWindowController: NSWindowController {
             )
         )
         DebugConsoleController.log("queue", "expandAsync: start singleFolder=\(folder.lastPathComponent)")
+        let reportFound = makeIntakeScanFoundReporter(generation: generation)
 
         folderScanTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let result = try MediaFileSupport.expandToSupportedMedia(
                     [folder],
                     acceptedKinds: acceptedKinds,
-                    shouldCancel: { Task.isCancelled }
+                    shouldCancel: { Task.isCancelled },
+                    onFound: reportFound
                 )
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -2280,13 +2592,15 @@ class PlayerWindowController: NSWindowController {
             )
         )
         DebugConsoleController.log("queue", "expandAsync: start urls=\(urls.count) folders=\(dirs.count)")
+        let reportFound = makeIntakeScanFoundReporter(generation: generation)
 
         folderScanTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
                 let result = try MediaFileSupport.expandToSupportedMedia(
                     urls,
                     acceptedKinds: acceptedKinds,
-                    shouldCancel: { Task.isCancelled }
+                    shouldCancel: { Task.isCancelled },
+                    onFound: reportFound
                 )
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
@@ -2359,6 +2673,7 @@ class PlayerWindowController: NSWindowController {
             refreshQueueDisplays()
             logPlaybackQueueSnapshot("folderDropShuffle")
         }
+        beginGIFIntakeProgress(for: result.media)
     }
 
     private func applyExpandedMediaIntake(result: MediaFileSupport.ExpansionResult,
@@ -2431,6 +2746,7 @@ class PlayerWindowController: NSWindowController {
             refreshQueueDisplays()
             logPlaybackQueueSnapshot("folderDropShuffle")
         }
+        beginGIFIntakeProgress(for: expanded)
     }
 
     func handleDroppedURL(_ url: URL) {
@@ -2482,7 +2798,7 @@ class PlayerWindowController: NSWindowController {
     // MARK: - Sleep prevention
 
     private func acquirePlaybackSleepAssertion(reason: String) {
-        guard playbackActivity == nil else { return }
+        guard playbackActivity == nil, !isWindowClosed else { return }
         playbackActivity = ProcessInfo.processInfo.beginActivity(
             options: [.idleDisplaySleepDisabled, .idleSystemSleepDisabled, .userInitiated],
             reason: reason
@@ -2547,6 +2863,8 @@ class PlayerWindowController: NSWindowController {
                     self.clearCompletionSequence(reason: "explicit-play-resume")
                 }
                 DebugConsoleController.log("playback", "play: source=button")
+                // Resuming from pause keeps the audio output; any other state restarts it (P137).
+                if self.player.state != .paused { self.audioReassertPending = true }
                 self.player.play()
             }
             finish()
@@ -2792,9 +3110,7 @@ class PlayerWindowController: NSWindowController {
         lastUserSeekMT = 0
         lastPlayingMT = 0
         lastProgressMT = 0
-        lastSteadyPlaybackPosition = -1
-        lastSteadyPlaybackTimeMs = -1
-        lastSteadyPlaybackAdvanceMT = 0
+        midPlaybackStallClock.reset()
         lastStoppedMT = 0
         lastStoppedPosition = 0
         lastStoppedMediaURL = nil
@@ -2834,6 +3150,10 @@ class PlayerWindowController: NSWindowController {
             DispatchQueue.main.async { [weak self] in
                 self?.enqueuePlaybackCommand(named: name, action: action)
             }
+            return
+        }
+        guard !isWindowClosed else {
+            NSLog("[dwb-playback] commandDropped: name=%@ reason=window-closed", name)
             return
         }
 
@@ -2944,6 +3264,10 @@ class PlayerWindowController: NSWindowController {
               transitionStrategy.rawValue)
 
         currentMediaURL = url
+        currentItemVolumeKind = VolumeClassifier.shared.kind(for: url)
+        if currentItemVolumeKind == .nonLocal {
+            nonLocalFiles.request([url])   // rename availability; read off the main thread
+        }
 
         if MediaFileSupport.isImage(url) {
             // Image path — synchronous setup, no VLC involvement.
@@ -2977,7 +3301,10 @@ class PlayerWindowController: NSWindowController {
         clearImageSlideshowState()
 
         let cachedDuration = durationCache[url]
+        // A non-local `.mpg` skips the stable-duration loader (P142.1): its duration comes from
+        // the length VLC reports, like any other non-local file.
         currentDurationIsProvisional = MediaFileSupport.needsStableDuration(url) &&
+            mayStartDurationProbe(for: url, volume: currentItemVolumeKind) &&
             (cachedDuration == nil || cachedDuration == MediaFileSupport.durationLoadingText)
         if currentDurationIsProvisional {
             durationCache[url] = MediaFileSupport.durationLoadingText
@@ -3104,6 +3431,7 @@ class PlayerWindowController: NSWindowController {
                                         after delay: TimeInterval,
                                         action: @escaping () -> Void) {
         cancelScheduledPlaybackAction(reason: "reschedule-\(name)")
+        guard !isWindowClosed else { return }
         NSLog("[dwb-playback] autoplaySchedule: action=%@ delay=%.2fs", name, delay)
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
@@ -3124,9 +3452,12 @@ class PlayerWindowController: NSWindowController {
     /// Advances a confirmed failed item through the normal queue/start path.
     /// This is intentionally separate from completion policy: an error must never
     /// trigger Repeat One or immediately retry a one-item Endless Shuffle queue.
+    /// `detail` is logged to the Debug Console (warning) only when the failure is handled,
+    /// so a repeating watchdog on an already-handled item cannot flood the log.
     private func schedulePlaybackFailureAutoSkip(failedURL: URL,
                                                  failedSessionID: Int,
-                                                 source: String) {
+                                                 source: String,
+                                                 detail: String? = nil) {
         let attempt = PlaybackFailureAttempt(mediaURL: failedURL, sessionID: failedSessionID)
         let action = PlaybackFailureAdvancePolicy(
             currentDisplayIndex: currentDisplayIndex,
@@ -3168,11 +3499,24 @@ class PlayerWindowController: NSWindowController {
         failedPlaybackPaths.insert(failedURL.standardizedFileURL.path)
         refreshQueuePage()
         let filename = failedURL.lastPathComponent
+        // P142: a start failure or stall on a non-local volume stops here instead of skipping on
+        // to the next file on the same volume. Other sources behave as before.
+        let stopsHere = PlaybackStartFailureSource(rawValue: source) != nil
+            && PlaybackStartWindowPolicy.failureDecision(volume: VolumeClassifier.shared.kind(for: failedURL)) == .failAndStop
+        if let detail {
+            DebugConsoleController.log(level: .warning, category: "playback", message: detail)
+        }
         DebugConsoleController.log(level: .error,
                                    category: "playback",
-                                   message: "failure: \(filename) source=\(source) action=\(action)")
+                                   message: "failure: \(filename) source=\(source) action=\(stopsHere ? .stopAtEnd : action)")
         NSLog("[dwb-playback] failureAutoSkip: source=%@ media=%@ session=%d action=%@ schedule=immediate",
-              source, filename, failedSessionID, String(describing: action))
+              source, filename, failedSessionID, String(describing: stopsHere ? .stopAtEnd : action))
+
+        if stopsHere {
+            DebugConsoleController.log("volume", "no auto-skip: \(filename) source=\(source)")
+            showPlaybackFailureOverlay(filename: filename)
+            return
+        }
 
         guard action == .skipToNextDistinctItem else {
             NSLog("[dwb-playback] failureAutoSkip: no-distinct-successor media=%@", filename)
@@ -3267,13 +3611,16 @@ class PlayerWindowController: NSWindowController {
             let media = VLCMedia(url: url)
             self.player.media = media
             self.applyPlaybackSpeed(reason: "reuse-player-media-replacement")
-            // P50: Do NOT use force:true here. The reuse path (same player, new media) does not
-            // reset audio volume — VLC config retains the last applied value from player init or
-            // any explicit volume change. Calling config_PutInt (via audio.volume=) on the main
-            // thread after player.stop() acquires a global rwlock write lock that blocks on any
-            // active VLCKit reader thread, causing a process-wide main-thread hang across all
-            // windows. Skip the redundant write; applyWindowAudioState's changed-detection guard
-            // handles genuine volume changes correctly without touching the global config lock.
+            // P50: Do NOT write the volume here, and never use force:true. This runs right after
+            // player.stop(); calling config_PutInt (via audio.volume=) on the main thread at that
+            // point acquires a global rwlock write lock that blocks on any active VLCKit reader
+            // thread, causing a process-wide main-thread hang across all windows.
+            // P137: skipping is not enough on its own. VLC's volume state is shared by every
+            // player in the process, so the audio output created by play() below can start at
+            // another window's value that this window's cache knows nothing about. The window
+            // arms audioReassertPending instead; reassertWindowAudioIfNeeded compares VLC's
+            // actual volume with this window's at `.playing` (when the output is up) and writes
+            // only if they differ.
             let appliedAudio = self.applyWindowAudioState(reason: "reuse-player-media-replacement")
             // Unlike volume, the delay is reapplied unconditionally (force: true) on every
             // media swap: currentAudioPlaybackDelay is tied to VLC's audio track/demux state,
@@ -3295,6 +3642,7 @@ class PlayerWindowController: NSWindowController {
                   startReason,
                   self.player.state.rawValue,
                   self.player.media?.url?.lastPathComponent ?? "—")
+            self.audioReassertPending = true
             self.player.play()
             NSLog("[dwb-playback] playCurrentItem: after player.play() reason=%@ state=%d isPlaying=%d media=%@",
                   startReason,
@@ -3334,7 +3682,9 @@ class PlayerWindowController: NSWindowController {
                                                playRetryCount: 0,
                                                progressRetryCount: 0,
                                                sawPlaying: false,
-                                               recoveryUsed: false)
+                                               recoveryUsed: false,
+                                               volume: VolumeClassifier.shared.kind(for: expectedURL),
+                                               windowStartMT: CACurrentMediaTime())
         playbackStartHandshake = handshake
         NSLog("[dwb-playback] handshakeArm: id=%d reason=%@ expectedMedia=%@ session=%d transition=%@ baselineTimeMs=%d baselinePos=%.3f",
               handshake.id,
@@ -3454,8 +3804,52 @@ class PlayerWindowController: NSWindowController {
                   handshake.reason,
                   timeMs,
                   position)
+            reassertWindowAudioIfNeeded(reason: "handshake-progress-confirmed")
             cancelPlaybackStartHandshake(reason: "progress-confirmed", suppressLog: true)
             clearCompletionSequence(reason: "handshake-success", suppressLog: true)
+            return
+        }
+
+        // P142: a file on a non-local volume gets one long window (and one rebuild after it) in
+        // place of the short retry counters below. While waiting nothing touches the player: no
+        // `play()` re-issue. Local files fall through to the counters, unchanged.
+        if handshake.volume == .nonLocal {
+            let failureSource: PlaybackStartFailureSource = (handshake.sawPlaying || started)
+                ? .handshakeNoProgress : .handshakeNoPlaying
+            let decision = PlaybackStartWindowPolicy.decide(
+                volume: .nonLocal,
+                source: failureSource,
+                elapsedSeconds: CACurrentMediaTime() - handshake.windowStartMT,
+                progressSeen: false,
+                recoveryAvailable: handshake.transitionStrategy == .reuseCurrentPlayer && !handshake.recoveryUsed)
+            switch decision {
+            case .wait:
+                playbackStartHandshake = handshake
+                schedulePlaybackStartHandshakeCheck(for: handshake.id)
+            case .rebuild:
+                handshake.recoveryUsed = true
+                handshake.playRetryCount = 0
+                handshake.progressRetryCount = 0
+                handshake.sawPlaying = false
+                handshake.windowStartMT = CACurrentMediaTime()
+                playbackStartHandshake = handshake
+                NSLog("[dwb-playback] handshakeRecovery: id=%d reason=%@ recovery=fresh-player-after-start-window target=%@",
+                      handshake.id,
+                      handshake.reason,
+                      handshake.expectedURL.lastPathComponent)
+                rebuildPlayerAfterFailedStart(for: handshake)
+                schedulePlaybackStartHandshakeCheck(for: handshake.id)
+            case .failAndStop, .failAndSkip:
+                NSLog("[dwb-playback] handshakeCheck: id=%d reason=%@ final=failure target=%@ failure=%@ (start window expired)",
+                      handshake.id,
+                      handshake.reason,
+                      handshake.expectedURL.lastPathComponent,
+                      failureSource.rawValue)
+                cancelPlaybackStartHandshake(reason: "start-window-expired", suppressLog: true)
+                schedulePlaybackFailureAutoSkip(failedURL: handshake.expectedURL,
+                                                failedSessionID: handshake.expectedSessionID,
+                                                source: failureSource.rawValue)
+            }
             return
         }
 
@@ -3553,6 +3947,7 @@ class PlayerWindowController: NSWindowController {
         applyWindowAudioState(reason: "handshake-recovery-media-assigned", force: true)
         applyAudioDelay(reason: "handshake-recovery-media-assigned", force: true)
         applyPlaybackSpeed(reason: "handshake-recovery-media-assigned")
+        audioReassertPending = true
         rebuiltPlayer.play()
         transport.invalidateCachedDisplayState()  // fresh player installed — force full refresh
         transport.update()
@@ -3584,6 +3979,7 @@ class PlayerWindowController: NSWindowController {
         NSLog("[dwb-playback] autoplayTransition: target=%@ playCall=1 reason=%@",
               url.lastPathComponent,
               startReason)
+        audioReassertPending = true
         freshPlayer.play()
     }
 
@@ -3668,6 +4064,7 @@ class PlayerWindowController: NSWindowController {
         }
         if sampledDurationMs > 0 {
             lastKnownDurationMs = max(lastKnownDurationMs, sampledDurationMs)
+            noteVLCReportedLength(sampledDurationMs)
         }
 
         lastPlayingMT = nowMT
@@ -3842,9 +4239,18 @@ class PlayerWindowController: NSWindowController {
            let failedURL = currentMediaURL {
             NSLog("[dwb-playback] completionDecision: source=paused action=failure reason=paused-before-eof-without-user-intent pos=%.3f media=%@",
                   sampledPosition, targetURLName)
-            schedulePlaybackFailureAutoSkip(failedURL: failedURL,
-                                            failedSessionID: currentPlaybackSessionID,
-                                            source: "paused-before-eof")
+            let intentName: String = {
+                switch explicitPlayPauseIntent?.target {
+                case .pause?: return "pause"
+                case .play?:  return "play"
+                case nil:     return "none"
+                }
+            }()
+            schedulePlaybackFailureAutoSkip(
+                failedURL: failedURL,
+                failedSessionID: currentPlaybackSessionID,
+                source: "paused-before-eof",
+                detail: "paused-before-eof: \(targetURLName) pos=\(String(format: "%.3f", sampledPosition)) intent=\(intentName) session=\(currentPlaybackSessionID)")
             return
         }
 
@@ -3867,8 +4273,11 @@ class PlayerWindowController: NSWindowController {
         guard !currentItemIsImage,
               playbackStartHandshake == nil,
               !isUserStop,
-              player.isPlaying,
               let stalledURL = currentMediaURL else {
+            return
+        }
+        guard player.isPlaying else {
+            midPlaybackStallClock.playbackPaused()
             return
         }
 
@@ -3878,31 +4287,26 @@ class PlayerWindowController: NSWindowController {
 
         let timeMs = Int(player.time.intValue)
         let position = player.position
-        let advanced = lastSteadyPlaybackTimeMs < 0
-            || timeMs != lastSteadyPlaybackTimeMs
-            || (position.isFinite && lastSteadyPlaybackPosition.isFinite && position != lastSteadyPlaybackPosition)
-
-        if advanced {
-            lastSteadyPlaybackPosition = position
-            lastSteadyPlaybackTimeMs = timeMs
-            lastSteadyPlaybackAdvanceMT = nowMT
-            return
-        }
-
-        guard lastSteadyPlaybackAdvanceMT > 0 else {
-            lastSteadyPlaybackAdvanceMT = nowMT
-            return
-        }
-
-        let stalledForSeconds = nowMT - lastSteadyPlaybackAdvanceMT
-        guard stalledForSeconds >= midPlaybackStallToleranceSeconds else { return }
+        guard let stalledForSeconds = midPlaybackStallClock.stalledSeconds(
+            timeMs: timeMs,
+            position: position,
+            nowMT: nowMT,
+            toleranceSeconds: PlaybackStartWindowPolicy.stallToleranceSeconds(for: currentItemVolumeKind)
+        ) else { return }
+        guard PlaybackStartWindowPolicy.decide(volume: currentItemVolumeKind,
+                                               source: .midPlaybackStall,
+                                               elapsedSeconds: stalledForSeconds,
+                                               progressSeen: false,
+                                               recoveryAvailable: false) != .wait else { return }
 
         let stalledSessionID = currentPlaybackSessionID
         NSLog("[dwb-playback] midPlaybackStall: media=%@ session=%d stalledForSec=%.1f timeMs=%d pos=%.3f",
               stalledURL.lastPathComponent, stalledSessionID, stalledForSeconds, timeMs, position)
-        schedulePlaybackFailureAutoSkip(failedURL: stalledURL,
-                                        failedSessionID: stalledSessionID,
-                                        source: "mid-playback-stall")
+        schedulePlaybackFailureAutoSkip(
+            failedURL: stalledURL,
+            failedSessionID: stalledSessionID,
+            source: "mid-playback-stall",
+            detail: "stall: \(stalledURL.lastPathComponent) stalledFor=\(String(format: "%.1f", stalledForSeconds))s timeMs=\(timeMs) pos=\(String(format: "%.3f", position)) session=\(stalledSessionID)")
     }
 
     // MARK: - Playback speed
@@ -3930,10 +4334,22 @@ class PlayerWindowController: NSWindowController {
 
     // MARK: - Volume
 
-    private static func defaultPersistedVolume() -> Int32 {
+    /// The volume a new window starts at (D-010). Settings shows it when no window is open.
+    static func defaultPersistedVolume() -> Int32 {
         let key = SettingsWindowController.persistedVolumeKey
         guard UserDefaults.standard.object(forKey: key) != nil else { return 100 }
         return VolumePolicy.clamped(UserDefaults.standard.integer(forKey: key))
+    }
+
+    /// What Settings shows for this window: 0 while muted, otherwise the stored volume.
+    var currentEffectiveVolume: Int32 {
+        VolumePolicy.effectiveVolume(stored: windowVolume, muted: windowMuted)
+    }
+
+    /// Tells Settings when this window's effective volume changed, from any route.
+    private func postWindowVolumeChangedIfNeeded(from oldEffective: Int32, wasMuted: Bool) {
+        guard oldEffective != currentEffectiveVolume || wasMuted != windowMuted else { return }
+        NotificationCenter.default.post(name: .windowVolumeChanged, object: self)
     }
 
     private var audioStateDescription: String {
@@ -3955,9 +4371,13 @@ class PlayerWindowController: NSWindowController {
         let changed = lastAppliedAudioState?.volume != nextState.volume || lastAppliedAudioState?.muted != nextState.muted
         if force || changed {
             // P50: audio.volume= calls config_PutInt (VLCKit global rwlock write) when the audio
-            // output is not active. Only write when state actually changed or the caller forces it
-            // (e.g. fresh-player-install). Redundant writes on the reuse/replacement path were the
-            // source of the multi-window main-thread hang traced in spindump 26-05-19.
+            // output is not active. Only write when the window's effective state changed or the
+            // caller forces it (e.g. fresh-player-install). Redundant writes on the reuse/
+            // replacement path were the source of the multi-window main-thread hang traced in
+            // spindump 26-05-19.
+            // P137: the cache only knows what this window last wrote. VLC's volume is shared by
+            // every player, so another window can change it behind the cache; the start check in
+            // reassertWindowAudioIfNeeded covers that by comparing VLC's actual value.
             player?.audio?.volume = appliedVolume
             lastAppliedAudioState = nextState
             // Only log when something actually changed or a caller forced the apply.
@@ -3971,6 +4391,20 @@ class PlayerWindowController: NSWindowController {
         return nextState
     }
 
+    /// P137: writes this window's volume back to VLC only when VLC's actual value differs.
+    /// Call it only where an audio output is up (`.playing`, handshake progress confirmed), never
+    /// right after `player.stop()` (P50). Does nothing when VLC reports no usable value.
+    private func reassertWindowAudioIfNeeded(reason: String) {
+        guard let audio = player?.audio else { return }
+        let actual = audio.volume
+        let intended: Int32 = windowMuted ? 0 : VolumePolicy.clamped(windowVolume)
+        guard let corrected = AudioReassertPolicy.valueToWrite(actual: actual, intended: intended) else { return }
+        audio.volume = corrected
+        lastAppliedAudioState = (volume: corrected, muted: windowMuted)
+        needsTransportUpdate = true   // rail and transport icons read VLC's actual volume
+        DebugConsoleController.log("audio", "reassert: window=\(debugIdentity) reason=\(reason) read=\(actual) wrote=\(corrected) muted=\(windowMuted)")
+    }
+
     func adjustVolume(by delta: Int) {
         let oldVol = windowVolume
         let wasMuted = windowMuted
@@ -3981,6 +4415,7 @@ class PlayerWindowController: NSWindowController {
         applyWindowAudioState(reason: "volume-adjust")
         persistVolume(newVol)
         showVolumeHUD(volume: newVol)
+        postWindowVolumeChangedIfNeeded(from: VolumePolicy.effectiveVolume(stored: oldVol, muted: wasMuted), wasMuted: wasMuted)
     }
 
     func setVolumeFromBar(_ vol: Int32) {
@@ -3993,6 +4428,20 @@ class PlayerWindowController: NSWindowController {
         applyWindowAudioState(reason: "volume-bar")
         persistVolume(newVol)
         showVolumeHUD(volume: newVol)
+        postWindowVolumeChangedIfNeeded(from: VolumePolicy.effectiveVolume(stored: oldVol, muted: wasMuted), wasMuted: wasMuted)
+    }
+
+    /// Settings' Window volume slider: the volume bar's rules without the HUD.
+    func setVolumeFromSettings(_ vol: Int32) {
+        let oldVol = windowVolume
+        let wasMuted = windowMuted
+        let newVol = VolumePolicy.clamped(vol)
+        windowVolume = newVol
+        windowMuted = newVol == 0
+        DebugConsoleController.log("audio", "volumeSet: window=\(debugIdentity) old=\(oldVol) new=\(newVol) wasMuted=\(wasMuted) muted=\(windowMuted) source=settings")
+        applyWindowAudioState(reason: "settings")
+        persistVolume(newVol)
+        postWindowVolumeChangedIfNeeded(from: VolumePolicy.effectiveVolume(stored: oldVol, muted: wasMuted), wasMuted: wasMuted)
     }
 
     func showVolumeBar(volume: Int32) {
@@ -4000,6 +4449,7 @@ class PlayerWindowController: NSWindowController {
     }
 
     func toggleMuteFromTransport() {
+        let oldEffective = currentEffectiveVolume
         let wasMuted = windowMuted
         if windowMuted {
             if windowVolume == 0 { windowVolume = Self.defaultPersistedVolume() }
@@ -4011,6 +4461,7 @@ class PlayerWindowController: NSWindowController {
         DebugConsoleController.log("audio", "muteToggle: window=\(debugIdentity) oldMuted=\(wasMuted) newMuted=\(windowMuted) storedVolume=\(windowVolume)")
         let applied = applyWindowAudioState(reason: "mute-toggle")
         showVolumeHUD(volume: applied.volume)
+        postWindowVolumeChangedIfNeeded(from: oldEffective, wasMuted: wasMuted)
     }
 
     func volumeUp()   { adjustVolume(by: 10)  }
@@ -4130,8 +4581,22 @@ class PlayerWindowController: NSWindowController {
     // MARK: - Update timer
 
     private func startUpdateTimer() {
+        lastUpdateTickMT = 0
         updateTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self = self else { return }
+
+            // P142: a long gap between ticks means the main thread was blocked (or the run loop
+            // was in menu-tracking mode; Open panels are excluded). Logged as a warning so it is kept even
+            // when the console is off.
+            let tickMT = CACurrentMediaTime()
+            if self.lastUpdateTickMT > 0,
+               tickMT - self.lastUpdateTickMT > self.mainThreadGapLogSeconds,
+               Self.lastModalReturnMT <= self.lastUpdateTickMT {
+                DebugConsoleController.log(level: .warning,
+                                           category: "volume",
+                                           message: "main-thread gap \(String(format: "%.1f", tickMT - self.lastUpdateTickMT)) s window=\(self.debugIdentity)")
+            }
+            self.lastUpdateTickMT = tickMT
 
             // Image slideshow: update transport state and check for auto-advance.
             if self.currentItemIsImage {
@@ -4196,6 +4661,7 @@ class PlayerWindowController: NSWindowController {
     private func stopUpdateTimer() {
         updateTimer?.invalidate()
         updateTimer = nil
+        lastUpdateTickMT = 0
     }
 
     // MARK: - HUD / transport visibility
@@ -4375,8 +4841,14 @@ class PlayerWindowController: NSWindowController {
 extension PlayerWindowController: NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
+        // Closing a window leaves nothing running: no playback, timer, work item,
+        // observer, or sleep assertion outlives it (P136).
+        isWindowClosed = true
         cancelPendingFolderScan()
         resetPlaybackCompletionSignals(reason: "window-will-close")
+        queuedPlaybackCommands.removeAll()
+        gifDurations.removeAll()
+        gifIntakeProgress = nil
         releasePlaybackSleepAssertion()
         stopUpdateTimer()
         hideHUDTimer?.invalidate()
@@ -4384,18 +4856,42 @@ extension PlayerWindowController: NSWindowDelegate {
         seekTargetResetTimer?.invalidate()
         removeMouseTracking()
         NotificationCenter.default.removeObserver(self)
-        if player.isPlaying {
+        if currentItemIsImage {
+            clearImageSlideshowState()   // also stops the GIF frame timer
+        }
+        // Stop whenever media is loaded, playing or paused; isUserStop keeps the
+        // resulting .stopped from auto-advancing.
+        if player.media != nil {
             isUserStop = true
             player.stop()
         }
+        updateSettingsTargetOutline()
+        DebugConsoleController.log("window", "close: window=\(debugIdentity)")
         if let appDelegate = NSApp.delegate as? AppDelegate {
             appDelegate.windowControllers.removeAll { $0 === self }
         }
+        postTargetingChanged()
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        lastKeyStamp = Self.makeTargetingStamp()
+        postTargetingChanged()
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) {
+        minimizeStamp = Self.makeTargetingStamp()
+        postTargetingChanged()
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        minimizeStamp = nil
+        postTargetingChanged()
     }
 
     func windowWillEnterFullScreen(_ notification: Notification) {
         isEnteringFullscreen = true
         applyWindowOpacity(reason: "fullscreen-will-enter", force: true)
+        updateSettingsTargetOutline()
         // AppKit manages window levels during fullscreen; restore normal level first
         // so the transition is clean.  The level is reapplied on exit if needed.
         if isKeepAtTop { window?.level = .normal }
@@ -4486,6 +4982,7 @@ extension PlayerWindowController: NSWindowDelegate {
             self.isExitingFullscreen = false
             self.applyWindowedChromeModeIfNeeded()
             self.applyWindowOpacity(reason: "fullscreen-exit-settled", force: true)
+            self.updateSettingsTargetOutline()
             self.logChromeState("windowDidExitFullScreen [deferred settle]")
             self.layoutPlayerViews()
             // Restore keep-at-top level now that AppKit has finished its fullscreen cleanup.
@@ -4634,6 +5131,21 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
             self?.needsTransportUpdate = true
         }
 
+        // Debug Console: one line per settled state. Opening and buffering are too chatty.
+        let consoleStateName: String? = {
+            switch capturedState {
+            case .playing: return "playing"
+            case .paused:  return "paused"
+            case .ended:   return "ended"
+            case .stopped: return "stopped"
+            case .error:   return "error"
+            default:       return nil
+            }
+        }()
+        if let consoleStateName {
+            DebugConsoleController.log("playback", "state: \(consoleStateName) pos=\(String(format: "%.3f", capturedPosition)) media=\(capturedMediaName)")
+        }
+
         switch capturedState {
 
         // ── Informational state transitions (logged for tracing; no action needed) ──
@@ -4664,6 +5176,15 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
                 self.updatePlaybackProgressSnapshot(position: capturedPosition)
                 if !self.currentItemIsImage {
                     self.acquirePlaybackSleepAssertion(reason: "Video playback")
+                }
+                // P137: first `.playing` of a start that may have created a new audio output.
+                // Consumed here whether or not a correction is needed; the handshake check is
+                // the second chance. Pause→resume never arms the flag.
+                if self.audioReassertPending,
+                   !self.currentItemIsImage,
+                   capturedMediaURL?.path == self.currentMediaURL?.path {
+                    self.audioReassertPending = false
+                    self.reassertWindowAudioIfNeeded(reason: "first-playing")
                 }
                 guard let handshake = self.playbackStartHandshake else {
                     self.clearCompletionSequence(reason: "state-playing", suppressLog: true)
@@ -4832,9 +5353,11 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
                 guard let self = self else { return }
                 self.releasePlaybackSleepAssertion()
                 if let failedURL {
-                    self.schedulePlaybackFailureAutoSkip(failedURL: failedURL,
-                                                          failedSessionID: failedSessionID,
-                                                          source: "vlc-error")
+                    self.schedulePlaybackFailureAutoSkip(
+                        failedURL: failedURL,
+                        failedSessionID: failedSessionID,
+                        source: "vlc-error",
+                        detail: "vlc-error: \(failedURL.lastPathComponent) session=\(failedSessionID) route=direct")
                 } else if let trackedURL = self.currentMediaURL,
                           failedSessionID == self.currentPlaybackSessionID {
                     // player.media can already be nil by the time .error is delivered — this
@@ -4847,9 +5370,11 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
                           failedSessionID,
                           trackedURL.lastPathComponent,
                           self.playbackStartHandshake != nil ? 1 : 0)
-                    self.schedulePlaybackFailureAutoSkip(failedURL: trackedURL,
-                                                          failedSessionID: failedSessionID,
-                                                          source: "vlc-error-no-media")
+                    self.schedulePlaybackFailureAutoSkip(
+                        failedURL: trackedURL,
+                        failedSessionID: failedSessionID,
+                        source: "vlc-error-no-media",
+                        detail: "vlc-error: \(trackedURL.lastPathComponent) session=\(failedSessionID) route=current-tracked-media")
                 } else {
                     NSLog("[dwb-playback] state=error media=— session=%d ignored=no-current-attempt-identity",
                           failedSessionID)
@@ -4881,25 +5406,24 @@ extension PlayerWindowController: QueuePageViewDelegate {
 
     /// One-click custom prefix rename. Applies toggle/swap policy to all targets (multi-select safe).
     func queuePage(_ view: QueuePageView, didRequestCustomPrefixRenameAt indices: [Int]) {
-        let primary   = SettingsWindowController.customPrefixValue()
-        let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        guard !primary.isEmpty else {
-            DebugConsoleController.log("rename", "customPrefix: noop (empty prefix) source=queuePage")
-            return
-        }
-        performQueuePagePrefixRename(indices: indices, primary: primary, secondary: secondary,
-                                     invokedPrimary: true, tag: "customPrefix")
+        applyPrefix(indices: indices, invokedPrimary: true)
     }
 
     func queuePage(_ view: QueuePageView, didRequestSecondaryCustomPrefixRenameAt indices: [Int]) {
+        applyPrefix(indices: indices, invokedPrimary: false)
+    }
+
+    /// The single function behind the footer chips, the `N`/`M` keys and the rail buttons.
+    private func applyPrefix(indices: [Int], invokedPrimary: Bool) {
         let primary   = SettingsWindowController.customPrefixValue()
         let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        guard !secondary.isEmpty else {
-            DebugConsoleController.log("rename", "customPrefixSecondary: noop (empty prefix) source=queuePage")
+        let tag = invokedPrimary ? "customPrefix" : "customPrefixSecondary"
+        guard !(invokedPrimary ? primary : secondary).isEmpty else {
+            DebugConsoleController.log("rename", "\(tag): noop (empty prefix)")
             return
         }
         performQueuePagePrefixRename(indices: indices, primary: primary, secondary: secondary,
-                                     invokedPrimary: false, tag: "customPrefixSecondary")
+                                     invokedPrimary: invokedPrimary, tag: tag)
     }
 
     /// Shared implementation for queue-page prefix rename (primary and secondary).
@@ -5207,6 +5731,10 @@ extension PlayerWindowController: QueuePageViewDelegate {
         let newPathSet = newURLPaths
         durationCache = durationCache.filter { newPathSet.contains($0.key.standardizedFileURL.path) }
         durationSecondsCache = durationSecondsCache.filter { newPathSet.contains($0.key.standardizedFileURL.path) }
+        gifDurations.retain(paths: newPathSet, dropUnreadable: true)
+        updateGIFIntakeProgress { $0.retain(paths: newPathSet) }
+        reportedDurations.retain(paths: newPathSet)
+        nonLocalFiles.retain(paths: newPathSet)
 
         // Apply new queue state (does not touch playback).
         playbackSet = newURLs
@@ -5235,6 +5763,10 @@ extension PlayerWindowController: QueuePageViewDelegate {
     }
 
     /// Footer Undo: the same undo as Command-Z.
+    func queuePage(_ view: QueuePageView, didRequestPrefixKeyAction action: PrefixKeyRouting.Action) {
+        performPrefixAction(action, source: "queueTable-key")
+    }
+
     func queuePageDidRequestUndoMarkerRename(_ view: QueuePageView) {
         undoLastMarkerRename()
     }

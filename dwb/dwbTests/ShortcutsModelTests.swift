@@ -14,12 +14,13 @@ final class ShortcutsModelTests: XCTestCase {
     }
 
     func testEveryExistingShortcutIsListedExactlyOnce() {
-        // The 34 rows from the previous five window-based groups, regrouped by task.
+        // The rows from the previous five window-based groups, regrouped by task, plus Rename.
         let expected: [String] = [
             "Open Settings", "Quit dwb player", "Open File", "Reveal in Finder", "Clear Queue", "New Window",
             "Play / Pause", "Rewind by skip duration", "Forward by skip duration", "Volume Up", "Volume Down",
-            "Previous Item", "Next Item", "Bookmark Current Item", "Primary Prefix Rename",
-            "Secondary Prefix Rename", "Undo Marker Rename", "Advance Audio (Play Sooner)",
+            "Previous Item", "Next Item", "Bookmark Current Item", "Primary prefix (add / remove / replace)",
+            "Secondary prefix (add / remove / replace)", "Rename current file…", "Undo last prefix change",
+            "Advance Audio (Play Sooner)",
             "Delay Audio (Play Later)", "Reset Audio Sync", "Shuffle", "Endless Shuffle", "Repeat One",
             "10 seconds", "30 seconds", "60 seconds", "3 minutes",
             "Fit", "Fill", "Stretch", "Minimize", "Four Window Grid",
@@ -30,12 +31,15 @@ final class ShortcutsModelTests: XCTestCase {
         XCTAssertEqual(actual.count, expected.count, "no shortcut is listed twice")
     }
 
-    func testFileMarkerGroupHoldsTheTwoPrefixesAndUndo() {
+    func testFileMarkerGroupHoldsThePrefixesRenameAndUndo() {
         let markers = groups.first { $0.title == "File markers" }
         XCTAssertEqual(markers?.items.map(\.action),
-                       ["Primary Prefix Rename", "Secondary Prefix Rename", "Undo Marker Rename"])
-        XCTAssertEqual(markers?.items.map(\.keys), [["N"], ["M"], ["⌘Z"]])
-        XCTAssertEqual(markers?.items.map(\.tone), [.markerPrimary, .markerSecondary, .accent])
+                       ["Primary prefix (add / remove / replace)",
+                        "Secondary prefix (add / remove / replace)",
+                        "Rename current file…",
+                        "Undo last prefix change"])
+        XCTAssertEqual(markers?.items.map(\.keys), [["N"], ["M"], ["R"], ["⌘Z"]])
+        XCTAssertEqual(markers?.items.map(\.tone), [.markerPrimary, .markerSecondary, .accent, .accent])
     }
 
     func testSkipPresetsBookmarkAndAudioSyncSitInTheLabelledGroup() {
@@ -55,7 +59,7 @@ final class ShortcutsModelTests: XCTestCase {
     func testMapKeysKeepOnlyUnmodifiedKeysOnTheMap() {
         let rewind = allEntries.first { $0.action == "Rewind by skip duration" }
         XCTAssertEqual(rewind?.mapKeys, ["←"])
-        let undo = allEntries.first { $0.action == "Undo Marker Rename" }
+        let undo = allEntries.first { $0.action == "Undo last prefix change" }
         XCTAssertEqual(undo?.mapKeys, [])
         let audio = allEntries.first { $0.action == "Advance Audio (Play Sooner)" }
         XCTAssertEqual(audio?.mapKeys, ["["])
@@ -89,7 +93,7 @@ final class ShortcutsModelTests: XCTestCase {
 
     func testSearchMatchesKeyText() {
         let result = ShortcutsSearch.filter(groups, query: "⌘z").flatMap(\.items).map(\.action)
-        XCTAssertEqual(result, ["Undo Marker Rename"])
+        XCTAssertEqual(result, ["Undo last prefix change"])
     }
 
     func testSearchDropsGroupsLeftEmpty() {

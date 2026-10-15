@@ -12,10 +12,8 @@ enum SettingsDefaultsRegistry {
         static let acceptImageMedia = "acceptImageMedia"
         static let acceptGIFMedia = "acceptGIFMedia"
         static let showTitleOverlay = "showTitleOverlay"
-        static let deletePrefixRenameEnabled = "deletePrefixRenameEnabled"
         static let videoPageDButtonEnabled = "videoPageDButtonEnabled"
         static let customPrefixValue = "customPrefixValue"
-        static let customPrefixQueuePageEnabled = "customPrefixQueuePageEnabled"
         static let customPrefixSecondaryValue = "customPrefixValue2"
         static let debugConsoleEnabled = "debugConsoleEnabled"
         static let verboseAutoplayTrace = "verboseAutoplayTrace"
@@ -27,7 +25,6 @@ enum SettingsDefaultsRegistry {
         static let bottomRailShowReplayButton = "bottomRailShowReplayButton"
         static let bottomRailShowVolumeButton = "bottomRailShowVolumeButton"
         static let bottomRailShowBookmarkButton = "bottomRailShowBookmarkButton"
-        static let playerWindowOpacity = "playerWindowOpacity"
         /// Manual audio/video sync offset in milliseconds, applied to
         /// VLCMediaPlayer.currentAudioPlaybackDelay. Compensates for fixed
         /// output-device latency (e.g. Bluetooth headphones). Positive delays
@@ -44,6 +41,7 @@ enum SettingsDefaultsRegistry {
         static let chromeAutohideThreshold = 3.0
         static let playerWindowOpacityMin = 0.35
         static let playerWindowOpacityMax = 1.0
+        /// Every new player window starts at 100% opacity; window opacity is not stored.
         static let playerWindowOpacity = 1.0
         static let audioSyncDelayMilliseconds: Int32 = 0
         static let audioSyncDelayStepMilliseconds: Int32 = 50
@@ -61,7 +59,6 @@ enum SettingsDefaultsRegistry {
             Keys.autoHideTitlebar: false,
             Keys.completeVideoWindowMode: false,
             Keys.showTitleOverlay: true,
-            Keys.deletePrefixRenameEnabled: false,
             Keys.videoPageDButtonEnabled: false,
             Keys.customPrefixValue: "",
             Keys.customPrefixSecondaryValue: "",
@@ -75,7 +72,6 @@ enum SettingsDefaultsRegistry {
             Keys.bottomRailShowReplayButton: true,
             Keys.bottomRailShowVolumeButton: true,
             Keys.bottomRailShowBookmarkButton: true,
-            Keys.playerWindowOpacity: Defaults.playerWindowOpacity,
             Keys.audioSyncDelayMilliseconds: Defaults.audioSyncDelayMilliseconds,
         ]
 

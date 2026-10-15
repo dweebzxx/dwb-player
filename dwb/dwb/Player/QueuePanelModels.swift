@@ -37,20 +37,36 @@ enum QueuePanelMetrics {
     static let markerGroupHeight: CGFloat = 28
     static let markerChipHeight: CGFloat = 22
     static let markerGroupPadding: CGFloat = 3
+    /// One pill radius for the group outline and every highlight inside it: the applied chip
+    /// fill and edge, the chip hover fill and Undo's hover fill.
+    static let markerGroupCornerRadius: CGFloat = DWBMetrics.radiusPill
+    static let markerHighlightCornerRadius: CGFloat = markerGroupCornerRadius
     static let footerHorizontalPadding: CGFloat = 12
+    /// Gap between items in one footer row.
     static let footerRowGap: CGFloat = 8
     static let footerTopPadding: CGFloat = 8
-    /// 4 pt below the marker row plus 4 pt above the action row, as in `QueueFooter.jsx`.
-    static let footerRowSpacing: CGFloat = 8
+    /// Gap between footer rows.
+    static let footerRowSpacing: CGFloat = 6
     static let footerBottomPadding: CGFloat = 10
+    static let footerRemoveButtonSize: CGFloat = 26
+    /// The total label's own row, used when it does not fit beside Rescan and Clear Queue.
+    static let footerTotalRowHeight: CGFloat = 16
+    static let footerDividerWidth: CGFloat = 1
     static let compactIconPillWidth: CGFloat = 28
     static let compactIconsBelowWidth: CGFloat = 390
 
-    /// Height of the footer, border excluded.
-    static func footerHeight(showsMarkerRow: Bool) -> CGFloat {
-        let actionRow = footerPillHeight + footerBottomPadding
-        guard showsMarkerRow else { return footerTopPadding + actionRow }
-        return footerTopPadding + markerGroupHeight + footerRowSpacing + actionRow
+    /// Height of the footer, border excluded: the Remove row (with the marker group beside it,
+    /// or the group on its own row below), an optional total-label row, and the Rescan row.
+    static func footerHeight(plan: QueueFooterLayoutPlan) -> CGFloat {
+        var height = footerTopPadding
+        if plan.groupWraps {
+            height += footerRemoveButtonSize + footerRowSpacing + markerGroupHeight
+        } else {
+            height += markerGroupHeight
+        }
+        if plan.totalOnOwnRow { height += footerRowSpacing + footerTotalRowHeight }
+        height += footerRowSpacing + footerPillHeight + footerBottomPadding
+        return height
     }
 
     /// The rounded row shape inside a full-width table row. `visibleWidth` is the part of
@@ -114,71 +130,210 @@ enum QueueSectionLabelStyle: Equatable {
     }
 }
 
+/// The one rule for a stored prefix, shared by the Settings accessors and every reader.
+enum PrefixNormalization {
+    /// Trim whitespace and newlines; an empty result is blank (""). Otherwise remove every
+    /// trailing "_" and add exactly one: "keep", "keep_" and "keep__" all give "keep_".
+    static func normalized(_ prefix: String) -> String {
+        let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        var body = Substring(trimmed)
+        while body.last == "_" { body = body.dropLast() }
+        return String(body) + "_"
+    }
+}
+
 /// One marker chip (`N` or `M`) in the footer group.
 struct QueueMarkerChipState: Equatable {
     enum Kind: Equatable { case primary, secondary }
 
     let kind: Kind
+    /// The normalized prefix, which is also what pressing the chip applies.
+    let prefix: String
     let label: String
     let isBlank: Bool
     let isApplied: Bool
     let isEnabled: Bool
 
+    /// The key that does the same as the chip. Used only in tooltips; nothing draws it.
     var keyTag: String { kind == .primary ? "N" : "M" }
 
-    static func trimmed(_ prefix: String) -> String {
-        prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    private var kindName: String { kind == .primary ? "primary" : "secondary" }
+    private var otherKindName: String { kind == .primary ? "secondary" : "primary" }
 
-    /// The existing prefix-button label: the trimmed prefix up to 8 characters, or "—" when blank.
+    /// The chip label: the first 8 characters of the normalized prefix, plus "…" when it is
+    /// longer, or "—" when blank.
     static func label(forPrefix prefix: String) -> String {
-        let t = trimmed(prefix)
+        let t = PrefixNormalization.normalized(prefix)
         if t.isEmpty { return "—" }
         return t.count <= 8 ? t : String(t.prefix(8)) + "…"
     }
 
     /// A chip reads "applied" when it has a prefix and every targeted file already starts with it.
     static func isApplied(prefix: String, targetNames: [String]) -> Bool {
-        let t = trimmed(prefix)
+        let t = PrefixNormalization.normalized(prefix)
         guard !t.isEmpty, !targetNames.isEmpty else { return false }
         return targetNames.allSatisfy { $0.hasPrefix(t) }
     }
 
-    static func make(kind: Kind, prefix: String, targetNames: [String]) -> QueueMarkerChipState {
-        let blank = trimmed(prefix).isEmpty
+    /// A chip is clickable only with a non-blank prefix and at least one item in the queue.
+    static func isEnabled(prefix: String, queueHasItems: Bool) -> Bool {
+        queueHasItems && !PrefixNormalization.normalized(prefix).isEmpty
+    }
+
+    /// The secondary chip is not offered when it equals a non-empty primary prefix.
+    static func secondaryIsShown(primary: String, secondary: String) -> Bool {
+        let p = PrefixNormalization.normalized(primary)
+        let s = PrefixNormalization.normalized(secondary)
+        return s.isEmpty || s != p
+    }
+
+    static func make(kind: Kind, prefix: String, targetNames: [String], queueHasItems: Bool) -> QueueMarkerChipState {
+        let t = PrefixNormalization.normalized(prefix)
         return QueueMarkerChipState(kind: kind,
+                                    prefix: t,
                                     label: label(forPrefix: prefix),
-                                    isBlank: blank,
+                                    isBlank: t.isEmpty,
                                     isApplied: isApplied(prefix: prefix, targetNames: targetNames),
-                                    isEnabled: !blank)
+                                    isEnabled: isEnabled(prefix: prefix, queueHasItems: queueHasItems))
+    }
+
+    var tooltip: String {
+        if isBlank { return "No \(kindName) prefix set. Set one in Settings > Queue & Files." }
+        return "\(kindName.capitalized) prefix “\(prefix)”: add it to the selected file, press again to remove it, or replace the \(otherKindName) prefix. Shortcut: \(keyTag)"
+    }
+
+    var accessibilityLabel: String {
+        if isBlank { return "\(kindName.capitalized) prefix not set" }
+        return "Apply \(kindName) prefix \(prefix) to selected file"
+    }
+
+    /// "applied" or "not applied"; a blank chip has no value.
+    var accessibilityValue: String? {
+        isBlank ? nil : (isApplied ? "applied" : "not applied")
     }
 }
 
-/// Which footer variant fits the width. Compact icons keep the old 390 pt rule; the
-/// chip group shortens Undo to its glyph first, then hands the prefix actions to the
-/// More menu when even that does not fit.
+/// Which footer variant fits the width. The marker group sits beside Remove with full
+/// Undo, then with glyph-only Undo, then wraps to its own row (full Undo if it fits that
+/// row, else glyph-only). Nothing moves into a menu. The total label takes its own row
+/// when it does not fit between Rescan and Clear Queue.
 struct QueueFooterLayoutPlan: Equatable {
     var usesCompactIcons: Bool
     var usesCompactUndo: Bool
-    var usesPrefixOverflow: Bool
+    var groupWraps: Bool
+    var totalOnOwnRow: Bool
 
+    static func usesCompactIcons(width: CGFloat) -> Bool {
+        width < QueuePanelMetrics.compactIconsBelowWidth
+    }
+
+    /// All widths are in points. `rescanWidth` and `clearWidth` are the widths at the
+    /// compact-icon setting that `usesCompactIcons(width:)` gives for `width`.
     static func make(width: CGFloat,
-                     hasPrefixActions: Bool,
                      removeButtonWidth: CGFloat,
                      fullGroupWidth: CGFloat,
-                     compactUndoGroupWidth: CGFloat) -> QueueFooterLayoutPlan {
-        let compactIcons = width < QueuePanelMetrics.compactIconsBelowWidth
-        let available = width
-            - QueuePanelMetrics.footerHorizontalPadding * 2
-            - removeButtonWidth
-            - QueuePanelMetrics.footerRowGap
-        if fullGroupWidth <= available {
-            return QueueFooterLayoutPlan(usesCompactIcons: compactIcons, usesCompactUndo: false, usesPrefixOverflow: false)
+                     compactUndoGroupWidth: CGFloat,
+                     rescanWidth: CGFloat,
+                     totalWidth: CGFloat,
+                     clearWidth: CGFloat) -> QueueFooterLayoutPlan {
+        let gap = QueuePanelMetrics.footerRowGap
+        let rowWidth = width - QueuePanelMetrics.footerHorizontalPadding * 2
+        let besideRemove = rowWidth - removeButtonWidth - gap
+
+        var compactUndo = false
+        var wraps = false
+        if fullGroupWidth <= besideRemove {
+            compactUndo = false
+        } else if compactUndoGroupWidth <= besideRemove {
+            compactUndo = true
+        } else {
+            wraps = true
+            compactUndo = fullGroupWidth > rowWidth
         }
-        if compactUndoGroupWidth <= available {
-            return QueueFooterLayoutPlan(usesCompactIcons: compactIcons, usesCompactUndo: true, usesPrefixOverflow: false)
+
+        // Rescan, total, divider, Clear Queue: three gaps between four items.
+        let inlineTotalRow = rescanWidth + totalWidth + QueuePanelMetrics.footerDividerWidth + clearWidth + gap * 3
+        return QueueFooterLayoutPlan(usesCompactIcons: usesCompactIcons(width: width),
+                                     usesCompactUndo: compactUndo,
+                                     groupWraps: wraps,
+                                     totalOnOwnRow: inlineTotalRow > rowWidth)
+    }
+}
+
+/// The footer's single total label.
+enum QueueFooterText {
+    static func itemCountText(_ count: Int) -> String {
+        count == 1 ? "1 item" : "\(count) items"
+    }
+
+    /// `Total: <duration> | <N> items`, or `Total: <duration> | <v>/<N> shown` while a
+    /// search or filter is active.
+    static func total(duration: String, itemCount: Int, visibleCount: Int, isFiltered: Bool) -> String {
+        if isFiltered {
+            return "Total: \(duration) | \(visibleCount)/\(itemCount) shown"
         }
-        return QueueFooterLayoutPlan(usesCompactIcons: compactIcons, usesCompactUndo: true, usesPrefixOverflow: hasPrefixActions)
+        return "Total: \(duration) | \(itemCountText(itemCount))"
+    }
+}
+
+/// The playback rail's primary and secondary prefix buttons.
+enum RailPrefixButtons {
+    /// The first character of the normalized prefix plus "_", or "" when blank.
+    static func label(forPrefix prefix: String) -> String {
+        let t = PrefixNormalization.normalized(prefix)
+        guard let first = t.first else { return "" }
+        return "\(first)_"
+    }
+
+    static func showsPrimary(primary: String, prefixButtonsEnabled: Bool) -> Bool {
+        prefixButtonsEnabled && !PrefixNormalization.normalized(primary).isEmpty
+    }
+
+    static func showsSecondary(primary: String, secondary: String, prefixButtonsEnabled: Bool) -> Bool {
+        prefixButtonsEnabled
+            && !PrefixNormalization.normalized(secondary).isEmpty
+            && QueueMarkerChipState.secondaryIsShown(primary: primary, secondary: secondary)
+    }
+
+    enum Slot { case primary, secondary }
+
+    /// The More menu lists a prefix action only when the "Prefix buttons" setting is on and
+    /// that rail button is hidden for lack of width. With the setting off the menu has none.
+    static func showsInMoreMenu(_ slot: Slot,
+                                primary: String,
+                                secondary: String,
+                                prefixButtonsEnabled: Bool,
+                                buttonIsHidden: Bool) -> Bool {
+        guard buttonIsHidden else { return false }
+        switch slot {
+        case .primary:   return showsPrimary(primary: primary, prefixButtonsEnabled: prefixButtonsEnabled)
+        case .secondary: return showsSecondary(primary: primary, secondary: secondary, prefixButtonsEnabled: prefixButtonsEnabled)
+        }
+    }
+}
+
+/// Plain-key routing for the prefix and rename shortcuts.
+enum PrefixKeyRouting {
+    enum Action: Equatable { case primaryPrefix, secondaryPrefix, rename }
+
+    /// `N`, `M` and `R` with no modifier, never while a text field is being edited.
+    static func action(forCharacters characters: String?,
+                       hasModifiers: Bool,
+                       isEditingText: Bool) -> Action? {
+        guard !hasModifiers, !isEditingText, let characters else { return nil }
+        switch characters.lowercased() {
+        case "n": return .primaryPrefix
+        case "m": return .secondaryPrefix
+        case "r": return .rename
+        default:  return nil
+        }
+    }
+
+    /// `R` renames the one selected row. With none or several selected it returns nil and the
+    /// caller renames the current file.
+    static func selectedRenameRow(selectedDisplayIndices: [Int]) -> Int? {
+        selectedDisplayIndices.count == 1 ? selectedDisplayIndices[0] : nil
     }
 }
 

@@ -279,7 +279,7 @@ final class TransportControlsView: NSView {
     }
 
     @objc private func dPrefixVideoPageTapped() {
-        controller?.performCustomPrefixRenameCurrentItem()
+        controller?.performPrefixAction(.primaryPrefix, source: "videoPage")
     }
 
     // MARK: - Visibility settings

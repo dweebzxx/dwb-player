@@ -59,6 +59,17 @@ final class IntakeRecoveryView: NSView {
     }
 
     func present(_ presentation: MediaIntakeRecoveryPresentation) {
+        // A count update to the card already on screen changes only its text, so the
+        // buttons (and keyboard focus on them) survive repeated progress updates.
+        if !isHidden, let current = self.presentation,
+           current.title == presentation.title,
+           current.actions == presentation.actions,
+           current.style == presentation.style {
+            self.presentation = presentation
+            messageLabel.stringValue = presentation.message
+            setAccessibilityValue(presentation.message)
+            return
+        }
         self.presentation = presentation
         titleLabel.stringValue = presentation.title
         messageLabel.stringValue = presentation.message
@@ -185,7 +196,7 @@ final class IntakeRecoveryView: NSView {
         titleLabel.setAccessibilityElement(false)
         addSubview(titleLabel)
 
-        messageLabel.font = .systemFont(ofSize: 11.5)
+        messageLabel.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .regular)
         messageLabel.maximumNumberOfLines = 2
         messageLabel.setAccessibilityElement(false)
         addSubview(messageLabel)
@@ -225,7 +236,7 @@ final class IntakeRecoveryView: NSView {
             button.wantsLayer = true
             button.layer?.cornerRadius = 6
             button.layer?.borderWidth = 1
-            if index == 0 {
+            if index == 0 && action != .cancelIntake {
                 button.isBordered = false
                 button.layer?.backgroundColor = PlayerTheme.current.accentFill.cgColor
                 button.layer?.borderColor = PlayerTheme.current.accentFill.cgColor
@@ -288,6 +299,7 @@ final class IntakeRecoveryView: NSView {
         case .revealSource: return "Reveal the source folder in Finder"
         case .locateSource: return "Choose the source folder again"
         case .showDetails: return "Show diagnostic details for this failure"
+        case .cancelIntake: return "Stop loading the dropped media"
         }
     }
 

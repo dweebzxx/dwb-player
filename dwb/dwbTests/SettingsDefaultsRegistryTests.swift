@@ -16,7 +16,6 @@ final class SettingsDefaultsRegistryTests: XCTestCase {
         XCTAssertEqual(defaults[keys.autoHideTitlebar] as? Bool, false)
         XCTAssertEqual(defaults[keys.completeVideoWindowMode] as? Bool, false)
         XCTAssertEqual(defaults[keys.showTitleOverlay] as? Bool, true)
-        XCTAssertEqual(defaults[keys.deletePrefixRenameEnabled] as? Bool, false)
         XCTAssertEqual(defaults[keys.videoPageDButtonEnabled] as? Bool, false)
         XCTAssertEqual(defaults[keys.customPrefixValue] as? String, "")
         XCTAssertEqual(defaults[keys.customPrefixSecondaryValue] as? String, "")
@@ -30,7 +29,15 @@ final class SettingsDefaultsRegistryTests: XCTestCase {
         XCTAssertEqual(defaults[keys.bottomRailShowReplayButton] as? Bool, true)
         XCTAssertEqual(defaults[keys.bottomRailShowVolumeButton] as? Bool, true)
         XCTAssertEqual(defaults[keys.bottomRailShowBookmarkButton] as? Bool, true)
-        XCTAssertEqual(defaults[keys.playerWindowOpacity] as? Double, 1.0)
+    }
+
+    func testWindowOpacityIsNotRegisteredAndNewWindowsStartAtFullOpacity() {
+        let defaults = SettingsDefaultsRegistry.defaultValues(reduceMotionDefault: false)
+
+        XCTAssertNil(defaults["playerWindowOpacity"])
+        XCTAssertEqual(SettingsDefaultsRegistry.Defaults.playerWindowOpacity, 1.0)
+        XCTAssertEqual(SettingsDefaultsRegistry.Defaults.playerWindowOpacityMin, 0.35)
+        XCTAssertEqual(SettingsDefaultsRegistry.Defaults.playerWindowOpacityMax, 1.0)
     }
 
     func testDefaultValuesIgnoreRemovedAndLegacyQueueSettings() {
@@ -42,11 +49,17 @@ final class SettingsDefaultsRegistryTests: XCTestCase {
         XCTAssertNil(defaults["com.dwb.queueColumnSizeWidth"])
     }
 
+    func testPrefixChipGateSettingsAreNotRegistered() {
+        let defaults = SettingsDefaultsRegistry.defaultValues(reduceMotionDefault: false)
+
+        XCTAssertNil(defaults["customPrefixQueuePageEnabled"])
+        XCTAssertNil(defaults["deletePrefixRenameEnabled"])
+    }
+
     func testDefaultValuesKeepMigratedKeysUnset() {
         let defaults = SettingsDefaultsRegistry.defaultValues(reduceMotionDefault: false)
         let keys = SettingsDefaultsRegistry.Keys.self
 
-        XCTAssertNil(defaults[keys.customPrefixQueuePageEnabled])
         XCTAssertNil(defaults[keys.persistedVolume])
     }
 

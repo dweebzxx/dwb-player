@@ -288,4 +288,86 @@ final class PlaybackCompletionPolicyTests: XCTestCase {
             .ignoreStaleOrUserStop
         )
     }
+
+    // MARK: - Mid-playback stall clock
+
+    private let stallTolerance: TimeInterval = 4.0
+
+    func testStallClockPausedForSixtySecondsThenResumedDoesNotStallOnFirstTick() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 12_000, position: 0.25, nowMT: 100.00, toleranceSeconds: stallTolerance))
+        // The tick that sees the pause while the player still reports playing.
+        XCTAssertNil(clock.stalledSeconds(timeMs: 12_040, position: 0.2501, nowMT: 100.25, toleranceSeconds: stallTolerance))
+
+        clock.playbackPaused()
+
+        // Resumed 60 s later; VLC has not produced a new frame yet, so time is unchanged.
+        XCTAssertNil(clock.stalledSeconds(timeMs: 12_040, position: 0.2501, nowMT: 160.25, toleranceSeconds: stallTolerance))
+    }
+
+    func testStallClockPlayingWithTimeUnchangedForToleranceStalls() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 5_000, position: 0.5, nowMT: 10.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 5_000, position: 0.5, nowMT: 10.25, toleranceSeconds: stallTolerance))
+        let stalled = clock.stalledSeconds(timeMs: 5_000, position: 0.5, nowMT: 14.0, toleranceSeconds: stallTolerance)
+        XCTAssertNotNil(stalled)
+        XCTAssertEqual(stalled ?? 0, 4.0, accuracy: 0.001)
+        XCTAssertNotNil(clock.stalledSeconds(timeMs: 5_000, position: 0.5, nowMT: 20.0, toleranceSeconds: stallTolerance))
+    }
+
+    func testStallClockPlayingWithTimeUnchangedBelowToleranceDoesNotStall() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 5_000, position: 0.5, nowMT: 10.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 5_000, position: 0.5, nowMT: 13.75, toleranceSeconds: stallTolerance))
+    }
+
+    func testStallClockStallAfterResumeIsStillDetected() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_000, position: 0.4, nowMT: 50.0, toleranceSeconds: stallTolerance))
+        clock.playbackPaused()
+
+        // Resumed after 60 s, plays for a moment, then freezes.
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_000, position: 0.4, nowMT: 110.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_250, position: 0.4003, nowMT: 110.25, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_250, position: 0.4003, nowMT: 114.0, toleranceSeconds: stallTolerance))
+        let stalled = clock.stalledSeconds(timeMs: 8_250, position: 0.4003, nowMT: 114.25, toleranceSeconds: stallTolerance)
+        XCTAssertNotNil(stalled)
+        XCTAssertEqual(stalled ?? 0, 4.0, accuracy: 0.001)
+    }
+
+    func testStallClockNoMovementForToleranceAfterResumeStalls() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_000, position: 0.4, nowMT: 50.0, toleranceSeconds: stallTolerance))
+        clock.playbackPaused()
+
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_000, position: 0.4, nowMT: 110.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 8_000, position: 0.4, nowMT: 113.75, toleranceSeconds: stallTolerance))
+        XCTAssertNotNil(clock.stalledSeconds(timeMs: 8_000, position: 0.4, nowMT: 114.0, toleranceSeconds: stallTolerance))
+    }
+
+    func testStallClockAdvancingTimeResetsTheClock() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 1_000, position: 0.1, nowMT: 10.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 1_000, position: 0.1, nowMT: 13.5, toleranceSeconds: stallTolerance))
+        // Movement just before the tolerance restarts the count from this sample.
+        XCTAssertNil(clock.stalledSeconds(timeMs: 1_250, position: 0.1003, nowMT: 13.75, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 1_250, position: 0.1003, nowMT: 17.5, toleranceSeconds: stallTolerance))
+        XCTAssertNotNil(clock.stalledSeconds(timeMs: 1_250, position: 0.1003, nowMT: 17.75, toleranceSeconds: stallTolerance))
+    }
+
+    func testStallClockPositionAloneAdvancingResetsTheClock() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 2_000, position: 0.2, nowMT: 10.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 2_000, position: 0.2005, nowMT: 20.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 2_000, position: 0.2005, nowMT: 23.75, toleranceSeconds: stallTolerance))
+    }
+
+    func testStallClockResetStartsAFreshClock() {
+        var clock = MidPlaybackStallClock()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 3_000, position: 0.3, nowMT: 10.0, toleranceSeconds: stallTolerance))
+        clock.reset()
+        XCTAssertNil(clock.stalledSeconds(timeMs: 3_000, position: 0.3, nowMT: 90.0, toleranceSeconds: stallTolerance))
+        XCTAssertNil(clock.stalledSeconds(timeMs: 3_000, position: 0.3, nowMT: 93.75, toleranceSeconds: stallTolerance))
+        XCTAssertNotNil(clock.stalledSeconds(timeMs: 3_000, position: 0.3, nowMT: 94.0, toleranceSeconds: stallTolerance))
+    }
 }

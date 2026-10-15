@@ -51,7 +51,26 @@ final class MediaIntakeRecoveryTests: XCTestCase {
         let result = MediaIntakeRecoveryPresentation.scanning(folderCount: 2)
         XCTAssertEqual(result.title, "Scanning Media")
         XCTAssertTrue(result.message.contains("2 selected folders"))
-        XCTAssertEqual(result.actions, [])
+        XCTAssertEqual(result.actions, [.cancelIntake])
+        XCTAssertEqual(result.style, .progress)
+        XCTAssertFalse(result.allowsDismissal)
+    }
+
+    func testScanningPresentationReportsFoundCount() {
+        let single = MediaIntakeRecoveryPresentation.scanning(folderCount: 1, foundCount: 1)
+        XCTAssertTrue(single.message.hasPrefix("Found 1 file in the selected folder."))
+        let many = MediaIntakeRecoveryPresentation.scanning(folderCount: 3, foundCount: 250)
+        XCTAssertTrue(many.message.hasPrefix("Found 250 files in 3 selected folders."))
+        XCTAssertTrue(many.message.contains("Playback and the queue remain available."))
+        XCTAssertEqual(many.title, "Scanning Media")
+    }
+
+    func testLoadingGIFDurationsPresentationIsCancellableProgress() {
+        let result = MediaIntakeRecoveryPresentation.loadingGIFDurations(finished: 12, total: 40)
+        XCTAssertEqual(result.title, "Loading Media")
+        XCTAssertTrue(result.message.hasPrefix("Reading GIF durations: 12 of 40."))
+        XCTAssertEqual(result.actions, [.cancelIntake])
+        XCTAssertEqual(MediaIntakeRecoveryAction.cancelIntake.title, "Cancel")
         XCTAssertEqual(result.style, .progress)
         XCTAssertFalse(result.allowsDismissal)
     }

@@ -53,6 +53,7 @@ targets:
     sources:
       - path: dwbTests
       - path: dwb/Player/MediaFileSupportCore.swift
+      - path: dwb/Player/GIFDurationMetadata.swift
       - path: dwb/Player/MarkerRenameUndoPlan.swift
       - path: dwb/Player/PlayerOverlayModels.swift
       - path: dwb/Player/PlaybackCompletionPolicy.swift
@@ -60,6 +61,7 @@ targets:
       - path: dwb/Player/MediaIntakeRecovery.swift
       - path: dwb/Player/PlayerCommandValidation.swift
       - path: dwb/App/DebugLogSanitizer.swift
+      - path: dwb/App/DebugLogBuffer.swift
       - path: dwb/App/BookmarkStore.swift
       - path: dwb/App/SettingsDefaultsRegistry.swift
       - path: dwb/App/DWBTheme.swift
@@ -70,6 +72,9 @@ targets:
       - path: dwb/App/SettingsPagesModel.swift
       - path: dwb/Player/ScaleMode.swift
       - path: dwb/Player/RenameSheetModels.swift
+      - path: dwb/App/PlayerWindowTargeting.swift
+      - path: dwb/Player/NonLocalVolumeMetadata.swift
+      - path: dwb/Player/PlaybackStartWindowPolicy.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: "YES"

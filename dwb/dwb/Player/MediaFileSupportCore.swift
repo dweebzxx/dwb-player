@@ -435,7 +435,8 @@ enum MediaFileSupport {
 
     private static func scanSupportedFiles(inFolder folder: URL,
                                            acceptedKinds: Set<MediaKind>?,
-                                           shouldCancel: () -> Bool) throws -> FolderScanResult {
+                                           shouldCancel: () -> Bool,
+                                           onFound: (Int) -> Void = { _ in }) throws -> FolderScanResult {
         guard !shouldCancel() else { throw CancellationError() }
         guard let enumerator = FileManager.default.enumerator(
             at: folder,
@@ -455,6 +456,7 @@ enum MediaFileSupport {
                 excludedCount += 1
             } else {
                 found.append(url)
+                if found.count % foundProgressInterval == 0 { onFound(found.count) }
             }
         }
         guard !shouldCancel() else { throw CancellationError() }
@@ -489,9 +491,15 @@ enum MediaFileSupport {
                                excludedMediaCount: 0)
     }
 
+    /// Folder scans report the running accepted-file count every this many files (P138).
+    static let foundProgressInterval = 250
+
+    /// `onFound` receives the running count of accepted files on the scanning thread,
+    /// every `foundProgressInterval` files within a folder and after each top-level item.
     static func expandToSupportedMedia(_ urls: [URL],
                                        acceptedKinds: Set<MediaKind>,
-                                       shouldCancel: () -> Bool) throws -> ExpansionResult {
+                                       shouldCancel: () -> Bool,
+                                       onFound: (Int) -> Void = { _ in }) throws -> ExpansionResult {
         var media: [URL] = []
         var emptyFolderNames: [String] = []
         var supportedMediaCount = 0
@@ -501,9 +509,11 @@ enum MediaFileSupport {
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
             if isDir.boolValue {
+                let base = media.count
                 let scan = try scanSupportedFiles(inFolder: url,
                                                   acceptedKinds: acceptedKinds,
-                                                  shouldCancel: shouldCancel)
+                                                  shouldCancel: shouldCancel,
+                                                  onFound: { onFound(base + $0) })
                 supportedMediaCount += scan.supportedCount
                 excludedMediaCount += scan.excludedCount
                 if scan.supportedCount == 0 {
@@ -520,6 +530,7 @@ enum MediaFileSupport {
                 }
             }
             // Unsupported files are silently skipped.
+            onFound(media.count)
         }
         return ExpansionResult(media: media,
                                emptyFolderNames: emptyFolderNames,

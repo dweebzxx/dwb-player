@@ -51,6 +51,28 @@ final class PlayerCommandValidationTests: XCTestCase {
         XCTAssertEqual(VolumePolicy.volume(forMeterFraction: 1.1, normalSegmentCount: 7, extendedSegmentCount: 4), 200)
     }
 
+    func testEffectiveVolumeIsZeroWhileMuted() {
+        XCTAssertEqual(VolumePolicy.effectiveVolume(stored: 80, muted: false), 80)
+        XCTAssertEqual(VolumePolicy.effectiveVolume(stored: 80, muted: true), 0)
+        XCTAssertEqual(VolumePolicy.effectiveVolume(stored: 0, muted: false), 0)
+        XCTAssertEqual(VolumePolicy.effectiveVolume(stored: 150, muted: false), 150)
+    }
+
+    func testSettingsSliderValueRoundsAndClamps() {
+        XCTAssertEqual(VolumePolicy.volume(forSliderValue: 99.6), 100)
+        XCTAssertEqual(VolumePolicy.volume(forSliderValue: 99.4), 99)
+        XCTAssertEqual(VolumePolicy.volume(forSliderValue: 150), 150)
+        XCTAssertEqual(VolumePolicy.volume(forSliderValue: -5), 0)
+        XCTAssertEqual(VolumePolicy.volume(forSliderValue: 250), 200)
+        XCTAssertEqual(VolumePolicy.volume(forSliderValue: .nan), 0)
+    }
+
+    func testSettingsVolumeReadoutText() {
+        XCTAssertEqual(VolumePolicy.percentText(0), "0%")
+        XCTAssertEqual(VolumePolicy.percentText(100), "100%")
+        XCTAssertEqual(VolumePolicy.percentText(150), "150%")
+    }
+
     func testFileAndQueueCommandsFollowCurrentWindowState() {
         XCTAssertEqual(PlayerCommandValidation.result(forTag: 10, state: state(hasCurrent: false))?.isEnabled, false)
         XCTAssertEqual(PlayerCommandValidation.result(forTag: 11, state: state(canRename: false))?.isEnabled, false)

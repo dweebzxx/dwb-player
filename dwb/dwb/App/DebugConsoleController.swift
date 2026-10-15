@@ -1,38 +1,18 @@
 import Cocoa
 
-// MARK: - Debug level
-
-enum DebugLevel: Int, Comparable {
-    case info = 0, warning, error
-
-    static func < (lhs: DebugLevel, rhs: DebugLevel) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-}
-
-// MARK: - Log entry
-
-struct DebugLogEntry {
-    let date: Date
-    let level: DebugLevel
-    let category: String
-    let message: String
-}
-
 // MARK: - Controller
 
-/// App-wide in-app debug console. Off by default; toggle in Settings > Developer.
-/// Ring buffer of 1000 entries. Supports category, level, and text filtering,
-/// plus Pause/Resume for freezing the visible log while the app continues buffering.
+/// App-wide in-app debug console. Window hidden by default; toggle in Settings > Developer.
+/// The console always keeps warnings, errors, and the 50 lines before them in memory
+/// (see `DebugLogBuffer`), and shows the full log only while it is on. Nothing is written
+/// to disk. Supports category, level, and text filtering, plus Pause/Resume for freezing
+/// the visible log while the app continues buffering.
 final class DebugConsoleController: NSWindowController {
 
     static let shared = DebugConsoleController()
 
     // MARK: - Constants
 
-    private static let maxEntries = 1000
-    // Slack so we trim in bulk (O(1) amortized) instead of removing one element per overflow log.
-    private static let maxEntriesSlack = 256
     // Cap text-view rebuild rate during log storms. With multiple windows generating
     // sustained logs, an unthrottled rebuild blocks the main thread enough to freeze
     // the whole app (debug console included).
@@ -40,7 +20,8 @@ final class DebugConsoleController: NSWindowController {
 
     // MARK: - Buffer state
 
-    private var entries: [DebugLogEntry] = []
+    private var buffer = DebugLogBuffer()
+    /// True while the console is on: record everything and show the window.
     private(set) var isEnabled: Bool = false
     private var isPaused: Bool = false
     private var knownCategories: [String] = []
@@ -160,22 +141,19 @@ final class DebugConsoleController: NSWindowController {
             DispatchQueue.main.async { log(level: level, category: category, message: message) }
             return
         }
-        guard shared.isEnabled else { return }
         shared.appendEntry(DebugLogEntry(date: Date(), level: level, category: category, message: message))
     }
 
     // MARK: - Internal append
 
     private func appendEntry(_ entry: DebugLogEntry) {
+        buffer.append(entry)
+        // Console off: memory only. No popup, text, render, or status work.
+        guard isEnabled else { return }
         if !knownCategories.contains(entry.category) {
             knownCategories.append(entry.category)
             knownCategories.sort()
             rebuildCategoryPopup()
-        }
-        entries.append(entry)
-        // Amortize trim: only shift the array once the slack is exceeded.
-        if entries.count > Self.maxEntries + Self.maxEntriesSlack {
-            entries.removeFirst(entries.count - Self.maxEntries)
         }
         scheduleRender()
     }
@@ -201,9 +179,7 @@ final class DebugConsoleController: NSWindowController {
         pendingRender = false
         lastRenderMT = now
         // Lazy trim to exact cap before rendering.
-        if entries.count > Self.maxEntries {
-            entries.removeFirst(entries.count - Self.maxEntries)
-        }
+        buffer.trimToLimit()
         if !isPaused, window?.isVisible == true {
             rebuildTextView()
         }
@@ -225,7 +201,7 @@ final class DebugConsoleController: NSWindowController {
     }
 
     private func visibleEntries() -> [DebugLogEntry] {
-        entries.filter { entryMatchesFilters($0) }
+        buffer.entries.filter { entryMatchesFilters($0) }
     }
 
     private func rebuildTextView() {
@@ -239,7 +215,7 @@ final class DebugConsoleController: NSWindowController {
     }
 
     private func updateStatus() {
-        let total   = entries.count
+        let total   = buffer.entries.count
         let visible = filterCategory == nil && filterMinLevel == nil && filterText.isEmpty
             ? total
             : visibleEntries().count
@@ -257,6 +233,12 @@ final class DebugConsoleController: NSWindowController {
     }
 
     // MARK: - Category popup
+
+    /// Rebuilds the category list (and popup) from the main buffer.
+    private func rebuildKnownCategories() {
+        knownCategories = Array(Set(buffer.entries.map(\.category))).sorted()
+        rebuildCategoryPopup()
+    }
 
     private func rebuildCategoryPopup() {
         let selected = filterCategory
@@ -279,16 +261,20 @@ final class DebugConsoleController: NSWindowController {
     @objc private func debugConsoleSettingDidChange() {
         let enabled = SettingsWindowController.isDebugConsoleEnabled()
         if enabled && !isEnabled {
+            // Order matters: history into the main buffer, categories from it, draw it, then show.
             isEnabled = true
+            buffer.setRecordingAll(true)
+            rebuildKnownCategories()
             rebuildTextView()
             updateStatus()
             showWindow(nil)
-            appendEntry(DebugLogEntry(date: Date(), level: .info,
-                                      category: "console", message: "Debug Console enabled"))
+            appendEntry(DebugLogEntry(date: Date(), level: .info, category: "console",
+                                      message: "Debug Console enabled. Before this point only warnings, errors, and the lines just before them were kept."))
         } else if !enabled && isEnabled {
             appendEntry(DebugLogEntry(date: Date(), level: .info,
                                       category: "console", message: "Debug Console disabled"))
             isEnabled = false
+            buffer.setRecordingAll(false)
             window?.orderOut(nil)
         }
     }
@@ -305,7 +291,7 @@ final class DebugConsoleController: NSWindowController {
     }
 
     @objc private func clearTapped() {
-        entries.removeAll()
+        buffer.clear()
         knownCategories.removeAll()
         filterCategory = nil
         rebuildCategoryPopup()
@@ -314,7 +300,7 @@ final class DebugConsoleController: NSWindowController {
     }
 
     @objc private func copyAllTapped() {
-        let text = sanitizedText(entries.map { formatEntry($0) }.joined(separator: "\n"))
+        let text = sanitizedText(buffer.entries.map { formatEntry($0) }.joined(separator: "\n"))
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         showCopyFeedback()
@@ -329,7 +315,7 @@ final class DebugConsoleController: NSWindowController {
         panel.nameFieldStringValue = "dwb player debug-\(safe).txt"
         panel.begin { [weak self] result in
             guard result == .OK, let url = panel.url, let self = self else { return }
-            let text = self.sanitizedText(self.entries.map { self.formatEntry($0) }.joined(separator: "\n"))
+            let text = self.sanitizedText(self.buffer.entries.map { self.formatEntry($0) }.joined(separator: "\n"))
             do {
                 try text.write(to: url, atomically: true, encoding: .utf8)
             } catch {
@@ -344,7 +330,8 @@ final class DebugConsoleController: NSWindowController {
     }
 
     @objc private func copySnapshotTapped() {
-        let total = entries.count
+        let all = buffer.entries
+        let total = all.count
         let visible = visibleEntries().count
         let pausedNote = isPaused ? " [PAUSED]" : ""
         let ts = timeFormatter.string(from: Date())
@@ -353,7 +340,7 @@ final class DebugConsoleController: NSWindowController {
             "Buffer: \(total) entries, \(visible) visible\(pausedNote)",
             ""
         ]
-        let recent = entries.suffix(20)
+        let recent = all.suffix(20)
         lines.append("Last \(recent.count) of \(total) entries:")
         lines.append(contentsOf: recent.map { formatEntry($0) })
         let text = sanitizedText(lines.joined(separator: "\n"))
@@ -427,6 +414,7 @@ final class DebugConsoleController: NSWindowController {
         super.init(window: panel)
         buildUI()
         isEnabled = SettingsWindowController.isDebugConsoleEnabled()
+        buffer.setRecordingAll(isEnabled)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(debugConsoleSettingDidChange),

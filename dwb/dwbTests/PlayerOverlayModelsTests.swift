@@ -149,7 +149,7 @@ final class PlayerOverlayModelsTests: XCTestCase {
         XCTAssertEqual(FailureMessageMetrics.height, 40)
     }
 
-    func testUndoToastShowsForAnyMarkerRenameAndIsBatchFromTwoFiles() {
+    func testUndoToastShowsForAnyPrefixChangeAndIsBatchFromTwoFiles() {
         XCTAssertFalse(UndoToastMetrics.shouldShow(forRenamedFileCount: 0))
         XCTAssertTrue(UndoToastMetrics.shouldShow(forRenamedFileCount: 1))
         XCTAssertTrue(UndoToastMetrics.shouldShow(forRenamedFileCount: 2))
@@ -159,13 +159,13 @@ final class PlayerOverlayModelsTests: XCTestCase {
     }
 
     func testUndoToastBatchCopyNeverListsNames() {
-        XCTAssertEqual(UndoToastMetrics.caption(renamedFileCount: 1), "Renamed to")
-        XCTAssertEqual(UndoToastMetrics.caption(renamedFileCount: 3), "Renamed")
+        XCTAssertEqual(UndoToastMetrics.caption(renamedFileCount: 1), "Prefix changed:")
+        XCTAssertEqual(UndoToastMetrics.caption(renamedFileCount: 3), "Prefix changed on")
         XCTAssertEqual(UndoToastMetrics.batchCountText(3), "3 files")
         XCTAssertEqual(UndoToastMetrics.spokenText(renamedFileCount: 3, filename: "keep_a.mp4"),
-                       "Renamed 3 files. Undo with Command Z.")
+                       "Prefix changed on 3 files. Undo with Command Z.")
         XCTAssertEqual(UndoToastMetrics.spokenText(renamedFileCount: 1, filename: "keep_a.mp4"),
-                       "Renamed to keep_a.mp4. Undo with Command Z.")
+                       "Prefix changed on keep_a.mp4. Undo with Command Z.")
     }
 
     func testHUDStackClearsTheUndoToast() {
@@ -227,6 +227,14 @@ final class PlayerOverlayModelsTests: XCTestCase {
         XCTAssertEqual(secondary, MarkerPrefixHighlight.Match(kind: .secondary, utf16Length: 4))
         XCTAssertNil(MarkerPrefixHighlight.match(in: "clip.mp4", primary: "keep_", secondary: "del_"))
         XCTAssertNil(MarkerPrefixHighlight.match(in: "clip.mp4", primary: "", secondary: ""))
+    }
+
+    func testMarkerPrefixHighlightReadsTheNormalizedPrefixAndKeepsTheLongerOne() {
+        // "keep" normalizes to "keep_"; "keep_x" to "keep_x_", which is longer and wins.
+        XCTAssertEqual(MarkerPrefixHighlight.match(in: "keep_clip.mp4", primary: "keep", secondary: ""),
+                       MarkerPrefixHighlight.Match(kind: .primary, utf16Length: 5))
+        XCTAssertEqual(MarkerPrefixHighlight.match(in: "keep_x_clip.mp4", primary: "keep_", secondary: "keep_x"),
+                       MarkerPrefixHighlight.Match(kind: .secondary, utf16Length: 7))
     }
 
     // MARK: Drop zone
