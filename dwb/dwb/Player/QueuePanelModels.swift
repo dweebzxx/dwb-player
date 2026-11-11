@@ -55,6 +55,17 @@ enum QueuePanelMetrics {
     static let compactIconPillWidth: CGFloat = 28
     static let compactIconsBelowWidth: CGFloat = 390
 
+    /// Windowed panel width: the default (and widest) is 45% of the content width, at least
+    /// 260 pt; a drag can narrow it to 200 pt.
+    static let panelDefaultWidthFraction: CGFloat = 0.45
+    static let panelDefaultMinimumWidth: CGFloat = 260
+    static let panelMinimumWidth: CGFloat = 200
+    /// The resize grab zone reaches this far to each side of the shared edge.
+    static let resizeGrabZoneHalfWidth: CGFloat = 4
+    /// The header hides its "Queue" title below this panel width so the search field keeps
+    /// at least the room it has at today's narrowest default width.
+    static let headerTitleHiddenBelowWidth: CGFloat = 260
+
     /// Height of the footer, border excluded: the Remove row (with the marker group beside it,
     /// or the group on its own row below), an optional total-label row, and the Rescan row.
     static func footerHeight(plan: QueueFooterLayoutPlan) -> CGFloat {
@@ -78,6 +89,38 @@ enum QueuePanelMetrics {
                       y: bounds.minY + rowInset,
                       width: max(0, shown - listLeadingInset - listTrailingInset),
                       height: max(0, bounds.height - rowInset * 2))
+    }
+}
+
+/// Windowed Queue Page width. Pure arithmetic; the player window owns the custom fraction.
+enum QueuePanelWidthPolicy {
+    /// The default width, which is also the widest a drag can make the panel.
+    static func maximumWidth(contentWidth: CGFloat) -> CGFloat {
+        max(QueuePanelMetrics.panelDefaultMinimumWidth,
+            contentWidth * QueuePanelMetrics.panelDefaultWidthFraction)
+    }
+
+    static func clampedWidth(_ proposed: CGFloat, contentWidth: CGFloat) -> CGFloat {
+        min(max(proposed, QueuePanelMetrics.panelMinimumWidth), maximumWidth(contentWidth: contentWidth))
+    }
+
+    /// The panel width for a content width and an optional custom fraction of it.
+    static func width(contentWidth: CGFloat, customFraction: CGFloat?) -> CGFloat {
+        guard let customFraction else { return maximumWidth(contentWidth: contentWidth) }
+        return clampedWidth(contentWidth * customFraction, contentWidth: contentWidth)
+    }
+
+    /// The fraction to store for a dragged edge at `edgeX` (the panel's left edge, from the
+    /// content view's left side), or nil when the clamped width is the maximum.
+    static func customFraction(forEdgeX edgeX: CGFloat, contentWidth: CGFloat) -> CGFloat? {
+        guard contentWidth > 0 else { return nil }
+        let width = clampedWidth(contentWidth - edgeX, contentWidth: contentWidth)
+        if width >= maximumWidth(contentWidth: contentWidth) - 0.5 { return nil }
+        return width / contentWidth
+    }
+
+    static func showsHeaderTitle(panelWidth: CGFloat) -> Bool {
+        panelWidth >= QueuePanelMetrics.headerTitleHiddenBelowWidth
     }
 }
 

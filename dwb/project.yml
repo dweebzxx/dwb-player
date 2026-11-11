@@ -75,6 +75,7 @@ targets:
       - path: dwb/App/PlayerWindowTargeting.swift
       - path: dwb/Player/NonLocalVolumeMetadata.swift
       - path: dwb/Player/PlaybackStartWindowPolicy.swift
+      - path: dwb/Player/AV1DecoderPreference.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: "YES"

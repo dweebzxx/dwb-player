@@ -97,7 +97,6 @@ class VideoSurfaceView: NSView {
             super.keyDown(with: event)
             return
         }
-        wc.noteChromeActivity()
         switch event.keyCode {
         case 49:   // Space — play/pause, no repeat
             if !event.isARepeat { wc.togglePlayPause() }
@@ -182,11 +181,6 @@ class VideoSurfaceView: NSView {
         default:
             super.keyUp(with: event)
         }
-    }
-
-    override func flagsChanged(with event: NSEvent) {
-        (window?.windowController as? PlayerWindowController)?.noteChromeActivity()
-        super.flagsChanged(with: event)
     }
 
     /// Start a two-phase timer for smooth hold-to-seek:
@@ -307,7 +301,6 @@ final class ImageSurfaceView: NSImageView {
             super.keyDown(with: event)
             return
         }
-        wc.noteChromeActivity()
         switch event.keyCode {
         case 49:   // Space
             if !event.isARepeat { wc.togglePlayPause() }

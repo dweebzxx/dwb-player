@@ -438,6 +438,12 @@ class PlayerWindowController: NSWindowController {
 
     private(set) var isQueuePageOpen = false
 
+    /// The user's dragged Queue Page width, as a fraction of the content width. Nil means the
+    /// default width. Belongs to this window only and is never saved.
+    private var queuePanelWidthFraction: CGFloat? = nil
+    /// Grab zone on the edge between the video area and the Queue Page (windowed only).
+    private let queuePanelResizeHandle = QueuePanelResizeHandleView(frame: .zero)
+
     /// Duration strings keyed by URL, populated lazily via AVFoundation.
     /// Set to "–:––" as a placeholder before the async fetch to prevent re-fetching.
     private var durationCache: [URL: String] = [:]
@@ -594,6 +600,19 @@ class PlayerWindowController: NSWindowController {
         queuePage.isHidden = true
         queuePage.isUndoAvailable = markerRenameUndoState.canUndo
         cv.addSubview(queuePage)
+
+        // Resize grab zone on the shared edge, directly above the Queue Page.
+        queuePanelResizeHandle.isHidden = true
+        queuePanelResizeHandle.onDrag = { [weak self] edgeX in
+            self?.queuePanelResizeDragged(toEdgeX: edgeX)
+        }
+        queuePanelResizeHandle.onDragEnd = { [weak self] in
+            self?.logQueuePanelWidth(event: "drag-end")
+        }
+        queuePanelResizeHandle.onReset = { [weak self] in
+            self?.resetQueuePanelWidth()
+        }
+        cv.addSubview(queuePanelResizeHandle, positioned: .above, relativeTo: queuePage)
 
         // Undo toast and failure message sit above the rail and HUDs.
         undoToastView.onUndo = { [weak self] in
@@ -813,10 +832,6 @@ class PlayerWindowController: NSWindowController {
             current = item.superview
         }
         return false
-    }
-
-    func noteChromeActivity() {
-        transport.noteChromeActivity()
     }
 
     @objc private func transportVisibilityDidChange() {
@@ -1114,6 +1129,7 @@ class PlayerWindowController: NSWindowController {
         if mode == .fullscreen {
             // Stable fullscreen: full-bleed video with cinematic overlay controls.
             queuePage.isHidden = true
+            queuePanelResizeHandle.isHidden = true
 
             videoSurface.frame = b
             videoSurface.layer?.frame = b
@@ -1130,7 +1146,7 @@ class PlayerWindowController: NSWindowController {
             // Geometry is derived ONLY from current contentView bounds; no cached
             // fullscreen frames, no screen bounds, no prior transport frames.
             let queueW: CGFloat = isQueuePageOpen
-                ? max(260, b.width * 0.45)
+                ? QueuePanelWidthPolicy.width(contentWidth: b.width, customFraction: queuePanelWidthFraction)
                 : 0
             let videoW = max(0, b.width - queueW)
 
@@ -1151,8 +1167,13 @@ class PlayerWindowController: NSWindowController {
             if isQueuePageOpen {
                 queuePage.isHidden = false
                 queuePage.frame = NSRect(x: videoW, y: 0, width: queueW, height: b.height)
+                let grabHalf = QueuePanelMetrics.resizeGrabZoneHalfWidth
+                queuePanelResizeHandle.frame = NSRect(x: videoW - grabHalf, y: 0,
+                                                      width: grabHalf * 2, height: b.height)
+                queuePanelResizeHandle.isHidden = false
             } else {
                 queuePage.isHidden = true
+                queuePanelResizeHandle.isHidden = true
             }
         }
 
@@ -1837,6 +1858,28 @@ class PlayerWindowController: NSWindowController {
         }
         layoutPlayerViews()
         transport.update()
+    }
+
+    // MARK: - Queue Page width (drag resize)
+
+    private func queuePanelResizeDragged(toEdgeX edgeX: CGFloat) {
+        guard let cv = window?.contentView, isQueuePageOpen, layoutMode != .fullscreen else { return }
+        queuePanelWidthFraction = QueuePanelWidthPolicy.customFraction(forEdgeX: edgeX,
+                                                                       contentWidth: cv.bounds.width)
+        layoutPlayerViews()
+    }
+
+    private func resetQueuePanelWidth() {
+        queuePanelWidthFraction = nil
+        layoutPlayerViews()
+        logQueuePanelWidth(event: "reset")
+    }
+
+    private func logQueuePanelWidth(event: String) {
+        let contentW = window?.contentView?.bounds.width ?? 0
+        let fraction = queuePanelWidthFraction.map { String(format: "%.3f", $0) } ?? "default"
+        DebugConsoleController.log("queue", String(format: "panelWidth: %@ width=%.0f contentWidth=%.0f fraction=%@",
+                                                   event, queuePage.frame.width, contentW, fraction))
     }
 
     // Coalesces multiple refreshQueuePage() calls within one runloop tick into a
@@ -3608,7 +3651,7 @@ class PlayerWindowController: NSWindowController {
             self.player.drawable = self.videoSurface
             self.lastAppliedScaleState = nil
             self.applyScaleMode()
-            let media = VLCMedia(url: url)
+            let media = VLCMedia.forPlayback(url: url, site: .reuse)
             self.player.media = media
             self.applyPlaybackSpeed(reason: "reuse-player-media-replacement")
             // P50: Do NOT write the volume here, and never use force:true. This runs right after
@@ -3938,7 +3981,7 @@ class PlayerWindowController: NSWindowController {
                                                targetURL: handshake.expectedURL,
                                                stopOldPlayer: true)
 
-        rebuiltPlayer.media = VLCMedia(url: handshake.expectedURL)
+        rebuiltPlayer.media = VLCMedia.forPlayback(url: handshake.expectedURL, site: .handshakeRecovery)
         NSLog("[dwb-playback] handshakeRecovery: id=%d assignedMedia=%@ session=%d volume=%d",
               handshake.id,
               handshake.expectedURL.lastPathComponent,
@@ -3961,7 +4004,7 @@ class PlayerWindowController: NSWindowController {
         let freshPlayer = installFreshPlayer(reason: startReason,
                                              targetURL: url,
                                              stopOldPlayer: true)
-        freshPlayer.media = VLCMedia(url: url)
+        freshPlayer.media = VLCMedia.forPlayback(url: url, site: .freshPlayer)
         applyWindowAudioState(reason: "fresh-player-media-assigned", force: true)
         applyAudioDelay(reason: "fresh-player-media-assigned", force: true)
         applyPlaybackSpeed(reason: "fresh-player-media-assigned")

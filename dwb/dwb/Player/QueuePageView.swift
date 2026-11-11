@@ -619,15 +619,18 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
                                             width: buttonSize,
                                             height: buttonSize)
 
+        // Below the narrowest default width the title gives its room to the search field.
+        let showsTitle = QueuePanelWidthPolicy.showsHeaderTitle(panelWidth: b.width)
+        titleLabel.isHidden = !showsTitle
         let titlePreferredWidth = ceil(titleLabel.intrinsicContentSize.width) + queueTitleTrailingSafety
         let titleAvailableWidth = max(0, bookmarkFilterButton.frame.minX - interItemGap - 16)
-        let titleWidth = min(titlePreferredWidth, titleAvailableWidth)
+        let titleWidth = showsTitle ? min(titlePreferredWidth, titleAvailableWidth) : 0
         let titleHeight = ceil(titleLabel.intrinsicContentSize.height)
         titleLabel.frame = NSRect(x: 16,
                                   y: floor(headerAxisY - titleHeight / 2),
                                   width: titleWidth,
                                   height: titleHeight)
-        let pillX = titleLabel.frame.maxX + queueTitleToPillGap
+        let pillX = showsTitle ? titleLabel.frame.maxX + queueTitleToPillGap : 16
         let pillRight = bookmarkFilterButton.frame.minX - interItemGap
         let maxPillW = max(260, min(560, b.width * 0.66))
         let pillW = max(0, min(pillRight - pillX, maxPillW))
