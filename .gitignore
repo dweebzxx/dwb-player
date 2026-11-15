@@ -93,6 +93,7 @@ node_modules/
 /assets/Brand_Color_System.pdf
 
 # Local-only workflow and internal artifacts (unrelated to Tier 2 workflow split)
+/future_features_deferred_ideas.md
 assets/
 .github/workflows/
 
