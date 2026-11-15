@@ -58,6 +58,10 @@ It is local-only: no streaming, cloud sync, telemetry, transcoding, or media-lib
   <img src="docs/images/dwb-settings.png" alt="dwb player Settings window showing the Playback pane" width="900">
 </p>
 
+## Download
+
+Download `dwb-player-1.5.1-macos.zip` from the [latest release](https://github.com/dweebzxx/dwb-player/releases/latest), unzip it, and move `dwb player.app` to Applications. The app is not notarized, so macOS blocks the first launch: right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "/Applications/dwb player.app"`.
+
 ## Build From Source
 
 Requirements: macOS 13 or newer, Xcode with command line tools, and a Swift 5.9-compatible toolchain. The first build needs network access so Swift Package Manager can fetch the pinned VLCKit package (`vlckit-spm` 3.6.0).
@@ -80,7 +84,7 @@ To create a local ZIP package with a checksum and draft release notes:
 
 ## Release and Signing
 
-The public release is source only. No signed or notarized binary has been published. Local builds are ad-hoc signed, not Developer ID signed, notarized, or sandboxed. A binary release would need Developer ID signing, notarization, and Gatekeeper verification. `./scripts/package-release.sh --check-release-inputs` checks those inputs without signing, notarizing, or uploading anything.
+Each release includes the source code and a built app zip. The built app is ad-hoc signed, not Developer ID signed, notarized, or sandboxed. A fully signed binary release would need Developer ID signing, notarization, and Gatekeeper verification. `./scripts/package-release.sh --check-release-inputs` checks those inputs without signing, notarizing, or uploading anything.
 
 ## License
 
