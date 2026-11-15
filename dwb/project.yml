@@ -35,8 +35,8 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: dwb/Resources/Info.plist
-        MARKETING_VERSION: "4.2.4"
-        CURRENT_PROJECT_VERSION: "4.2.4"
+        MARKETING_VERSION: "1.5.1"
+        CURRENT_PROJECT_VERSION: "1.5.1"
         PRODUCT_BUNDLE_IDENTIFIER: com.dwb.dwb
         PRODUCT_NAME: "dwb player"
         ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: "YES"
@@ -68,6 +68,9 @@ targets:
       - path: dwb/App/DWBAppearance.swift
       - path: dwb/App/PlayerTheme.swift
       - path: dwb/Player/QueuePanelModels.swift
+      - path: dwb/Player/QueuePanelLayout.swift
+      - path: dwb/Player/QueuePanelViews.swift
+      - path: dwb/Player/QueueRowAccessories.swift
       - path: dwb/App/ShortcutsModel.swift
       - path: dwb/App/SettingsPagesModel.swift
       - path: dwb/Player/ScaleMode.swift
@@ -75,6 +78,7 @@ targets:
       - path: dwb/App/PlayerWindowTargeting.swift
       - path: dwb/Player/NonLocalVolumeMetadata.swift
       - path: dwb/Player/PlaybackStartWindowPolicy.swift
+      - path: dwb/Player/PlaybackStartStallPolicy.swift
       - path: dwb/Player/AV1DecoderPreference.swift
     settings:
       base:

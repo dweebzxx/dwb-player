@@ -665,18 +665,16 @@ enum MediaFileSupport {
 
         // Determine which (if any) configured prefix the stem currently begins with.
         // Longer-match wins when one prefix is a prefix of the other.
-        let currentIsInvoked  = !invokedPrefix.isEmpty && stem.hasPrefix(invokedPrefix)
-        let currentIsOther    = !otherPrefix.isEmpty   && stem.hasPrefix(otherPrefix)
-
         let newStem: String
-        if currentIsInvoked {
+        switch classifyPrefixTransition(stem: stem, invokedPrefix: invokedPrefix, otherPrefix: otherPrefix) {
+        case .removed:
             // Same prefix is active → remove it (toggle off).
             newStem = String(stem.dropFirst(invokedPrefix.count))
-        } else if currentIsOther {
+        case .replaced:
             // Other prefix is active → replace it with the invoked prefix.
             let bareRemainder = String(stem.dropFirst(otherPrefix.count))
             newStem = "\(invokedPrefix)\(bareRemainder)"
-        } else {
+        case .added:
             // No configured prefix present → add the invoked prefix.
             newStem = "\(invokedPrefix)\(stem)"
         }
@@ -686,6 +684,106 @@ enum MediaFileSupport {
         // Treat identity (no change) as a no-op.
         guard newName != originalURL.lastPathComponent else { return nil }
         return newName
+    }
+
+    /// The branch `calculatePrefixTransition` takes for a stem. It is the single place that
+    /// decides removed / replaced / added, so the transition and `prefixTransitionKind`
+    /// cannot disagree. The invoked prefix is tested first, then the other prefix. A prefix
+    /// that is empty never matches.
+    private static func classifyPrefixTransition(
+        stem: String,
+        invokedPrefix: String,
+        otherPrefix: String
+    ) -> PrefixTransitionKind {
+        let currentIsInvoked = !invokedPrefix.isEmpty && stem.hasPrefix(invokedPrefix)
+        let currentIsOther   = !otherPrefix.isEmpty   && stem.hasPrefix(otherPrefix)
+        if currentIsInvoked { return .removed }
+        if currentIsOther   { return .replaced }
+        return .added
+    }
+
+    /// What `calculatePrefixTransition` would do to this file, as a kind: `.added` (neither
+    /// configured prefix present), `.replaced` (the other prefix present), `.removed` (the
+    /// invoked prefix present). Returns `nil` exactly when `calculatePrefixTransition` returns
+    /// `nil` (empty invoked prefix, or a name that would not change). Pure: no filesystem access.
+    static func prefixTransitionKind(
+        originalURL: URL,
+        primary: String,
+        secondary: String,
+        invokedPrimary: Bool
+    ) -> PrefixTransitionKind? {
+        guard calculatePrefixTransition(originalURL: originalURL,
+                                        primary: primary,
+                                        secondary: secondary,
+                                        invokedPrimary: invokedPrimary) != nil else { return nil }
+        return classifyPrefixTransition(
+            stem: originalURL.deletingPathExtension().lastPathComponent,
+            invokedPrefix: invokedPrimary ? primary : secondary,
+            otherPrefix: invokedPrimary ? secondary : primary
+        )
+    }
+}
+
+// MARK: - Advance after prefix (P145)
+
+/// What a prefix press does to a file name.
+enum PrefixTransitionKind: Equatable {
+    case added
+    case replaced
+    case removed
+}
+
+/// Where a prefix press came from. Only the player's own controls (rail prefix buttons,
+/// rail More items, `N`/`M` on the video or image page) may advance; the Queue Page's
+/// controls (footer chips, footer More items, `N`/`M` inside the table) never do.
+enum PrefixPressOrigin: Equatable {
+    case playerControl
+    case queuePage
+}
+
+enum PrefixAdvanceSkipReason: String, Equatable {
+    case removed
+    case queueTarget
+    case noNextItem
+    case renameFailed
+}
+
+enum PrefixAdvanceDecision: Equatable {
+    /// The setting is off: behave as before and log nothing.
+    case settingOff
+    case advance
+    case skip(PrefixAdvanceSkipReason)
+}
+
+enum PrefixAdvancePolicy {
+    /// Decides whether a prefix press should play the next item once the press has been handled.
+    /// Pure: no AppKit, no VLCKit, no filesystem access.
+    ///
+    /// - Parameters:
+    ///   - settingEnabled: the "Advance after prefix" setting.
+    ///   - origin: the control the press came from.
+    ///   - targetDisplayIndices: the rows the press renames.
+    ///   - currentDisplayIndex: the row that is playing.
+    ///   - kind: what the press does to the name.
+    ///   - renameSucceeded: whether the rename on disk succeeded.
+    ///   - hasNextItem: whether the Next button would move to another item.
+    static func decide(
+        settingEnabled: Bool,
+        origin: PrefixPressOrigin,
+        targetDisplayIndices: [Int],
+        currentDisplayIndex: Int,
+        kind: PrefixTransitionKind,
+        renameSucceeded: Bool,
+        hasNextItem: Bool
+    ) -> PrefixAdvanceDecision {
+        guard settingEnabled else { return .settingOff }
+        guard origin == .playerControl, targetDisplayIndices == [currentDisplayIndex] else {
+            return .skip(.queueTarget)
+        }
+        guard renameSucceeded else { return .skip(.renameFailed) }
+        guard kind != .removed else { return .skip(.removed) }
+        guard hasNextItem else { return .skip(.noNextItem) }
+        return .advance
     }
 }
 

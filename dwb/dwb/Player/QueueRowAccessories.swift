@@ -1,8 +1,7 @@
 import AppKit
 
-// Row parts for the Queue Page
-// (`tokens-and-specs.md` 9.7): the filename with its marker prefix and search match,
-// the Play Next tag, and the drop line.
+// Row parts for the Queue Page (`tokens-and-specs.md` 9.7 and 10.4): the filename with its
+// marker prefix and search match, the Play Next tag, and the drop line.
 
 // MARK: - Filename
 
@@ -68,17 +67,29 @@ private final class RoundedHighlightLayoutManager: NSLayoutManager {
     }
 }
 
-/// A one-line filename that truncates in the middle like a label but paints the search
-/// highlight with a rounded background, which an `NSTextField` cannot do.
+/// A one-line filename that paints the search highlight with a rounded background, which an
+/// `NSTextField` cannot do. At rest it truncates in the middle by measurement (§10.4); while a
+/// search is active it clips at the end so the highlighted match stays visible.
 final class QueueNameLabel: NSView {
+    enum Truncation { case middle, tail }
+
     private let storage = NSTextStorage()
     private let layoutManager = RoundedHighlightLayoutManager()
     private let container = NSTextContainer(size: NSSize(width: 1, height: CGFloat.greatestFiniteMagnitude))
+    private var cachedDisplay: (width: CGFloat, truncation: Truncation, text: NSAttributedString)?
 
     var attributedText = NSAttributedString() {
         didSet {
-            storage.setAttributedString(attributedText)
+            cachedDisplay = nil
             invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    var truncation: Truncation = .middle {
+        didSet {
+            guard truncation != oldValue else { return }
+            cachedDisplay = nil
             needsDisplay = true
         }
     }
@@ -89,7 +100,6 @@ final class QueueNameLabel: NSView {
         super.init(frame: frameRect)
         container.lineFragmentPadding = 0
         container.maximumNumberOfLines = 1
-        container.lineBreakMode = .byTruncatingMiddle
         container.widthTracksTextView = false
         container.heightTracksTextView = false
         layoutManager.addTextContainer(container)
@@ -99,6 +109,11 @@ final class QueueNameLabel: NSView {
 
     required init?(coder: NSCoder) { fatalError("programmatic only") }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        cachedDisplay = nil
+    }
+
     /// The width the name needs when nothing is truncated.
     var naturalWidth: CGFloat { ceil(attributedText.size().width) }
 
@@ -106,11 +121,32 @@ final class QueueNameLabel: NSView {
 
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: lineHeight) }
 
+    /// What is drawn at `width`: the whole name, a measured middle truncation, or (tail mode) the
+    /// whole name for the layout manager to clip.
+    func displayedText(forWidth width: CGFloat) -> NSAttributedString {
+        if let cachedDisplay, cachedDisplay.width == width, cachedDisplay.truncation == truncation {
+            return cachedDisplay.text
+        }
+        let text: NSAttributedString
+        switch truncation {
+        case .middle: text = QueueNameTruncation.truncated(attributedText, toFit: width)
+        case .tail: text = attributedText
+        }
+        cachedDisplay = (width, truncation, text)
+        return text
+    }
+
     /// Clicks go to the row, as they do for an `NSTextField` label.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
         guard bounds.width > 0, attributedText.length > 0 else { return }
+        let shown = NSMutableAttributedString(attributedString: displayedText(forWidth: bounds.width))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = truncation == .tail ? .byTruncatingTail : .byClipping
+        shown.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: shown.length))
+        storage.setAttributedString(shown)
+        container.lineBreakMode = paragraph.lineBreakMode
         container.size = NSSize(width: bounds.width, height: CGFloat.greatestFiniteMagnitude)
         let glyphRange = layoutManager.glyphRange(for: container)
         let used = layoutManager.usedRect(for: container)
@@ -123,7 +159,8 @@ final class QueueNameLabel: NSView {
 // MARK: - Play Next tag
 
 /// 16 pt tall, radius 4, 1 pt `accentFill` edge on `accentTint`: a list-start glyph and the
-/// position (9.5 pt bold, tabular). Placed after the name; hidden on the current row.
+/// position (9.5 pt bold, tabular). Placed after the name (same tag in the active look); hidden
+/// on the current row.
 final class QueuePlayNextTagView: NSView {
     private let label = NSTextField(labelWithString: "")
     private let glyph = NSImageView()
@@ -182,8 +219,26 @@ final class QueuePlayNextTagView: NSView {
 
 // MARK: - Drop line
 
-/// The drop line: a 2 pt `accentText` line with an 8 pt ring (2 pt `accentText` edge,
-/// `surface` fill) at its leading end. Lets the pointer through.
+/// The drop line shown between rows while drag-reordering in Manual sort: a straight 2 pt
+/// `accentText` line on the row's top or bottom edge, no ring (§10.4). The dragged row stays
+/// in the list at 0.4 alpha.
+enum QueueDropIndicatorMetrics {
+    static let lineHeight = DWBMetrics.dropLine
+    static let draggedRowAlpha = DWBMetrics.queueRowDragAlpha
+
+    /// The line inside a view `width` wide and one line tall.
+    static func lineRect(width: CGFloat) -> NSRect {
+        NSRect(x: 0, y: 0, width: max(0, width), height: lineHeight)
+    }
+
+    /// The line's frame on the boundary `boundaryY` between two rows, spanning the row shape
+    /// `shape` (centered on the boundary).
+    static func frame(onBoundaryY boundaryY: CGFloat, spanning shape: NSRect) -> NSRect {
+        NSRect(x: shape.minX, y: boundaryY - lineHeight / 2, width: shape.width, height: lineHeight)
+    }
+}
+
+/// The drop line: a 2 pt `accentText` line. Lets the pointer through.
 final class QueueDropIndicatorView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -201,17 +256,7 @@ final class QueueDropIndicatorView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        let accent = PlayerTheme.current.accentText
-        let geometry = QueueDropIndicatorMetrics.geometry(width: bounds.width)
-        accent.setFill()
-        NSBezierPath(roundedRect: geometry.line, xRadius: 1, yRadius: 1).fill()
-
-        let border = QueueDropIndicatorMetrics.ringBorder
-        let ring = NSBezierPath(ovalIn: geometry.ring.insetBy(dx: border / 2, dy: border / 2))
-        DWBColor.surface.setFill()
-        ring.fill()
-        accent.setStroke()
-        ring.lineWidth = border
-        ring.stroke()
+        PlayerTheme.current.accentText.setFill()
+        QueueDropIndicatorMetrics.lineRect(width: bounds.width).fill()
     }
 }

@@ -54,12 +54,49 @@ final class QueuePanelWidthPolicyTests: XCTestCase {
         XCTAssertEqual(fraction, 0.3, accuracy: accuracy)
     }
 
-    // MARK: Header title (narrow panel)
+    // MARK: Player formula and snap tolerance (§10.1)
 
-    func testHeaderTitleHidesBelowTodaysMinimumWidth() {
-        XCTAssertTrue(QueuePanelWidthPolicy.showsHeaderTitle(panelWidth: 260))
-        XCTAssertTrue(QueuePanelWidthPolicy.showsHeaderTitle(panelWidth: 450))
-        XCTAssertFalse(QueuePanelWidthPolicy.showsHeaderTitle(panelWidth: 259))
-        XCTAssertFalse(QueuePanelWidthPolicy.showsHeaderTitle(panelWidth: 200))
+    func testPlayerWidthUsesThePlayerBranchNotTheSkimGridOne() {
+        // Skim and grid would give 280...360 (31%); the player gives max(260, 45%).
+        XCTAssertEqual(QueuePanelWidthPolicy.maximumWidth(contentWidth: 1000), 450, accuracy: accuracy)
+        XCTAssertEqual(QueuePanelWidthPolicy.maximumWidth(contentWidth: 1000),
+                       DWBMetrics.queuePanelMaxWidth(contentWidth: 1000, isPlayer: true), accuracy: accuracy)
+        XCTAssertNotEqual(QueuePanelWidthPolicy.maximumWidth(contentWidth: 1000),
+                          DWBMetrics.queuePanelMaxWidth(contentWidth: 1000, isPlayer: false))
+        XCTAssertEqual(QueuePanelWidthPolicy.maximumWidth(contentWidth: 400), 260, accuracy: accuracy)
+    }
+
+    func testSnapToleranceIsHalfAPoint() throws {
+        XCTAssertEqual(DWBMetrics.queuePanelSnapTolerance, 0.5)
+        // 449.6 pt is within 0.5 of the 450 maximum: the custom width clears.
+        XCTAssertNil(QueuePanelWidthPolicy.customFraction(forEdgeX: 1000 - 449.6, contentWidth: 1000))
+        // 449.4 pt is not.
+        XCTAssertNotNil(QueuePanelWidthPolicy.customFraction(forEdgeX: 1000 - 449.4, contentWidth: 1000))
+    }
+
+    func testHalfOfASmallMaximumStillClampsToTheMinimum() {
+        // A 400 pt window has a 260 pt maximum; half of that is below 200 only when clamped.
+        XCTAssertEqual(QueuePanelWidthPolicy.clampedWidth(130, contentWidth: 400), 200, accuracy: accuracy)
+    }
+
+    // MARK: Keyboard resize uses the drag's clamp and snap
+
+    func testKeyboardWidenAndNarrowMoveByTenPoints() throws {
+        let narrower = try XCTUnwrap(QueuePanelWidthPolicy.customFraction(afterResizingBy: -10, currentWidth: 300, contentWidth: 1000))
+        XCTAssertEqual(narrower * 1000, 290, accuracy: accuracy)
+        let wider = try XCTUnwrap(QueuePanelWidthPolicy.customFraction(afterResizingBy: 10, currentWidth: 300, contentWidth: 1000))
+        XCTAssertEqual(wider * 1000, 310, accuracy: accuracy)
+    }
+
+    func testKeyboardNarrowingStopsAtTheMinimum() throws {
+        let fraction = try XCTUnwrap(QueuePanelWidthPolicy.customFraction(afterResizingBy: -10, currentWidth: 205, contentWidth: 1000))
+        XCTAssertEqual(fraction * 1000, 200, accuracy: accuracy)
+        let stuck = try XCTUnwrap(QueuePanelWidthPolicy.customFraction(afterResizingBy: -10, currentWidth: 200, contentWidth: 1000))
+        XCTAssertEqual(stuck * 1000, 200, accuracy: accuracy)
+    }
+
+    func testKeyboardWideningToTheMaximumClearsTheCustomWidth() {
+        XCTAssertNil(QueuePanelWidthPolicy.customFraction(afterResizingBy: 10, currentWidth: 445, contentWidth: 1000))
+        XCTAssertNil(QueuePanelWidthPolicy.customFraction(afterResizingBy: 10, currentWidth: 450, contentWidth: 1000))
     }
 }

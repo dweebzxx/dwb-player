@@ -83,6 +83,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     static let chromeReducedMotionKey   = SettingsDefaultsRegistry.Keys.chromeReducedMotion
     /// Open the Queue Page when a player window launches. Default: false.
     static let queuePanelOpenAtLaunchKey = SettingsDefaultsRegistry.Keys.queuePanelOpenAtLaunch
+    static let advanceAfterPrefixKey = SettingsDefaultsRegistry.Keys.advanceAfterPrefix
     /// Playback-bar button visibility toggles. All default ON to preserve the
     /// current unified-rail look; the user can hide individual buttons from
     /// Settings → Controls → Playback bar buttons.
@@ -334,6 +335,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
     private let customPrefixValueTextField             = DWBTextField()
     private let customPrefixSecondaryValueTextField    = DWBTextField()
     private let queuePanelOpenAtLaunchCheckbox = NSButton()
+    private let advanceAfterPrefixCheckbox = NSButton()
 
     // Advanced section
     private let debugConsoleCheckbox          = NSButton()
@@ -795,6 +797,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         configure(queuePanelOpenAtLaunchCheckbox, title: "Open Queue Page with new player windows", state: UserDefaults.standard.bool(forKey: Self.queuePanelOpenAtLaunchKey))
         queuePanelOpenAtLaunchCheckbox.setAccessibilityIdentifier("settings.queue.openAtLaunch")
 
+        configure(advanceAfterPrefixCheckbox, title: "Advance after prefix", state: UserDefaults.standard.bool(forKey: Self.advanceAfterPrefixKey))
+        advanceAfterPrefixCheckbox.setAccessibilityIdentifier("settings.queue.advanceAfterPrefix")
+
         customPrefixValueTextField.usesMonospacedFont = true
         customPrefixValueTextField.placeholderString = "e.g. x_"
         customPrefixValueTextField.stringValue = Self.storedCustomPrefixValue()
@@ -821,7 +826,9 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         ])
 
         let section3 = buildSection(title: "Queue behavior", rows: [
-            buildRow(label: nil, control: queuePanelOpenAtLaunchCheckbox)
+            buildRow(label: nil, control: queuePanelOpenAtLaunchCheckbox),
+            buildRow(label: nil, control: advanceAfterPrefixCheckbox,
+                     helperText: "After N, M or a rail prefix button adds a prefix to the current item, play the next item. Removing a prefix does not advance.")
         ])
 
         return buildPage(index: 2, sections: [section1, section3])
@@ -1185,6 +1192,11 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
             DebugConsoleController.log("settings", "queuePanelOpenAtLaunch=\(enabled)")
             return
         }
+        if sender === advanceAfterPrefixCheckbox {
+            UserDefaults.standard.set(enabled, forKey: Self.advanceAfterPrefixKey)
+            DebugConsoleController.log("settings", "advanceAfterPrefix=\(enabled)")
+            return
+        }
         let bottomRailKey: String?
         switch sender {
         case bottomRailShowXCheckbox:        bottomRailKey = Self.bottomRailShowXKey
@@ -1384,6 +1396,7 @@ final class SettingsWindowController: NSWindowController, NSTextFieldDelegate {
         verboseAutoplayTraceCheckbox.state     = Self.isVerboseAutoplayTraceEnabled()  ? .on : .off
         chromeReducedMotionCheckbox.state      = UserDefaults.standard.bool(forKey: Self.chromeReducedMotionKey)     ? .on : .off
         queuePanelOpenAtLaunchCheckbox.state   = UserDefaults.standard.bool(forKey: Self.queuePanelOpenAtLaunchKey) ? .on : .off
+        advanceAfterPrefixCheckbox.state       = UserDefaults.standard.bool(forKey: Self.advanceAfterPrefixKey) ? .on : .off
         bottomRailShowXCheckbox.state          = Self.isBottomRailShowXEnabled()        ? .on : .off
         bottomRailShowShuffleCheckbox.state    = Self.isBottomRailShowShuffleEnabled()  ? .on : .off
         bottomRailShowReplayCheckbox.state     = Self.isBottomRailShowReplayEnabled()   ? .on : .off

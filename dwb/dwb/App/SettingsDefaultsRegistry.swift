@@ -20,6 +20,7 @@ enum SettingsDefaultsRegistry {
         static let chromeAutohideThreshold = "chromeAutohideThreshold"
         static let chromeReducedMotion = "chromeReducedMotion"
         static let queuePanelOpenAtLaunch = "queuePanelOpenAtLaunch"
+        static let advanceAfterPrefix = "advanceAfterPrefix"
         static let bottomRailShowXButton = "bottomRailShowXButton"
         static let bottomRailShowShuffleButton = "bottomRailShowShuffleButton"
         static let bottomRailShowReplayButton = "bottomRailShowReplayButton"
@@ -67,6 +68,7 @@ enum SettingsDefaultsRegistry {
             Keys.chromeAutohideThreshold: Defaults.chromeAutohideThreshold,
             Keys.chromeReducedMotion: reduceMotionDefault,
             Keys.queuePanelOpenAtLaunch: false,
+            Keys.advanceAfterPrefix: false,
             Keys.bottomRailShowXButton: true,
             Keys.bottomRailShowShuffleButton: true,
             Keys.bottomRailShowReplayButton: true,

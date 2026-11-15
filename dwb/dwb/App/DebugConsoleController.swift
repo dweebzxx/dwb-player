@@ -3,7 +3,7 @@ import Cocoa
 // MARK: - Controller
 
 /// App-wide in-app debug console. Window hidden by default; toggle in Settings > Developer.
-/// The console always keeps warnings, errors, and the 50 lines before them in memory
+/// The console always keeps warnings, errors, and the 400 lines before them in memory
 /// (see `DebugLogBuffer`), and shows the full log only while it is on. Nothing is written
 /// to disk. Supports category, level, and text filtering, plus Pause/Resume for freezing
 /// the visible log while the app continues buffering.

@@ -1,107 +1,32 @@
 import AppKit
 
 /// Pure presentation rules for the Queue Page, taken from `tokens-and-specs.md`
-/// section 5 ("Queue panel" and "File markers"). No views, no UserDefaults.
+/// section 10 ("Queue panel (active look)"). No views, no UserDefaults. Geometry lives in
+/// `QueuePanelLayout.swift`; every number comes from `DWBMetrics`.
 
 enum QueuePanelMetrics {
     static let headerHeight = DWBMetrics.queueHeaderHeight
-    static let searchPillHeight: CGFloat = 28
-    static let headerButton: CGFloat = 26
 
-    static let rowHeight = DWBMetrics.queueRowHeight
-    static let rowInset = DWBMetrics.queueRowInset
-    /// A table row holds the 56 pt pill plus the 4 pt inset above and below it.
-    static var tableRowHeight: CGFloat { rowHeight + rowInset * 2 }
-    static let sectionRowHeight: CGFloat = 28
-    static let listLeadingInset: CGFloat = 12
-    static let listTrailingInset: CGFloat = 8
+    /// The resize grab zone reaches this far to each side of the shared edge (8 pt in all).
+    static let resizeGrabZoneHalfWidth: CGFloat = DWBMetrics.queueDividerHitWidth / 2
 
-    static let currentBarWidth: CGFloat = 3
-    static let currentBarLeading: CGFloat = 4
-    static let currentBarVerticalInset: CGFloat = 10
-    static let currentBarRadius: CGFloat = 2
-    static let playGlyphSize: CGFloat = 11
-    static let failedGlyphSize: CGFloat = 12
-    static let bookmarkGlyphSize: CGFloat = 12
-    static let glyphSlotWidth: CGFloat = 14
-    static let rowLeadingPadding: CGFloat = 12
-    static let rowTrailingPadding: CGFloat = 10
-    static let rowContentGap: CGFloat = 8
-    static let titleMetaGap: CGFloat = 3
-    /// Gap between the filename and the Play Next tag that follows it.
-    static let titleTagGap: CGFloat = 6
+    /// 10 pt caps captions elsewhere in the app (Settings group captions) track at +4%.
+    /// The Queue Page's own section labels do not track (§10.3).
+    static let sectionLabelKern: CGFloat = 0.4
 
-    static let sectionLabelKern: CGFloat = 0.4          // +4% of 10 pt
-
-    static let footerPillHeight: CGFloat = 26
-    static let markerGroupHeight: CGFloat = 28
-    static let markerChipHeight: CGFloat = 22
-    static let markerGroupPadding: CGFloat = 3
-    /// One pill radius for the group outline and every highlight inside it: the applied chip
-    /// fill and edge, the chip hover fill and Undo's hover fill.
-    static let markerGroupCornerRadius: CGFloat = DWBMetrics.radiusPill
-    static let markerHighlightCornerRadius: CGFloat = markerGroupCornerRadius
-    static let footerHorizontalPadding: CGFloat = 12
-    /// Gap between items in one footer row.
-    static let footerRowGap: CGFloat = 8
-    static let footerTopPadding: CGFloat = 8
-    /// Gap between footer rows.
-    static let footerRowSpacing: CGFloat = 6
-    static let footerBottomPadding: CGFloat = 10
-    static let footerRemoveButtonSize: CGFloat = 26
-    /// The total label's own row, used when it does not fit beside Rescan and Clear Queue.
-    static let footerTotalRowHeight: CGFloat = 16
-    static let footerDividerWidth: CGFloat = 1
-    static let compactIconPillWidth: CGFloat = 28
-    static let compactIconsBelowWidth: CGFloat = 390
-
-    /// Windowed panel width: the default (and widest) is 45% of the content width, at least
-    /// 260 pt; a drag can narrow it to 200 pt.
-    static let panelDefaultWidthFraction: CGFloat = 0.45
-    static let panelDefaultMinimumWidth: CGFloat = 260
-    static let panelMinimumWidth: CGFloat = 200
-    /// The resize grab zone reaches this far to each side of the shared edge.
-    static let resizeGrabZoneHalfWidth: CGFloat = 4
-    /// The header hides its "Queue" title below this panel width so the search field keeps
-    /// at least the room it has at today's narrowest default width.
-    static let headerTitleHiddenBelowWidth: CGFloat = 260
-
-    /// Height of the footer, border excluded: the Remove row (with the marker group beside it,
-    /// or the group on its own row below), an optional total-label row, and the Rescan row.
-    static func footerHeight(plan: QueueFooterLayoutPlan) -> CGFloat {
-        var height = footerTopPadding
-        if plan.groupWraps {
-            height += footerRemoveButtonSize + footerRowSpacing + markerGroupHeight
-        } else {
-            height += markerGroupHeight
-        }
-        if plan.totalOnOwnRow { height += footerRowSpacing + footerTotalRowHeight }
-        height += footerRowSpacing + footerPillHeight + footerBottomPadding
-        return height
-    }
-
-    /// The rounded row shape inside a full-width table row. `visibleWidth` is the part of
-    /// the row the clip view actually shows; a legacy scroller can make the table row wider
-    /// than that, and the 8 pt trailing inset has to land inside the visible part.
-    static func pillRect(inRowBounds bounds: NSRect, visibleWidth: CGFloat? = nil) -> NSRect {
-        let shown = min(bounds.width, (visibleWidth ?? bounds.width) > 0 ? (visibleWidth ?? bounds.width) : bounds.width)
-        return NSRect(x: bounds.minX + listLeadingInset,
-                      y: bounds.minY + rowInset,
-                      width: max(0, shown - listLeadingInset - listTrailingInset),
-                      height: max(0, bounds.height - rowInset * 2))
-    }
+    static let panelMinimumWidth = DWBMetrics.queuePanelMinWidth
 }
 
 /// Windowed Queue Page width. Pure arithmetic; the player window owns the custom fraction.
+/// The player's own formula (§10.1): max(260, 45% of the content width), at least 200 when dragged.
 enum QueuePanelWidthPolicy {
     /// The default width, which is also the widest a drag can make the panel.
     static func maximumWidth(contentWidth: CGFloat) -> CGFloat {
-        max(QueuePanelMetrics.panelDefaultMinimumWidth,
-            contentWidth * QueuePanelMetrics.panelDefaultWidthFraction)
+        DWBMetrics.queuePanelMaxWidth(contentWidth: contentWidth, isPlayer: true)
     }
 
     static func clampedWidth(_ proposed: CGFloat, contentWidth: CGFloat) -> CGFloat {
-        min(max(proposed, QueuePanelMetrics.panelMinimumWidth), maximumWidth(contentWidth: contentWidth))
+        min(max(proposed, DWBMetrics.queuePanelMinWidth), maximumWidth(contentWidth: contentWidth))
     }
 
     /// The panel width for a content width and an optional custom fraction of it.
@@ -111,28 +36,46 @@ enum QueuePanelWidthPolicy {
     }
 
     /// The fraction to store for a dragged edge at `edgeX` (the panel's left edge, from the
-    /// content view's left side), or nil when the clamped width is the maximum.
+    /// content view's left side), or nil when the clamped width is within the snap tolerance of the maximum.
     static func customFraction(forEdgeX edgeX: CGFloat, contentWidth: CGFloat) -> CGFloat? {
         guard contentWidth > 0 else { return nil }
         let width = clampedWidth(contentWidth - edgeX, contentWidth: contentWidth)
-        if width >= maximumWidth(contentWidth: contentWidth) - 0.5 { return nil }
+        if width >= maximumWidth(contentWidth: contentWidth) - DWBMetrics.queuePanelSnapTolerance { return nil }
         return width / contentWidth
     }
 
-    static func showsHeaderTitle(panelWidth: CGFloat) -> Bool {
-        panelWidth >= QueuePanelMetrics.headerTitleHiddenBelowWidth
+    /// The fraction after a keyboard nudge of the divider: `delta` points wider (positive) or
+    /// narrower from `currentWidth`, through the same clamp and snap as a drag.
+    static func customFraction(afterResizingBy delta: CGFloat, currentWidth: CGFloat, contentWidth: CGFloat) -> CGFloat? {
+        customFraction(forEdgeX: contentWidth - (currentWidth + delta), contentWidth: contentWidth)
     }
 }
 
-/// How one row looks, from the states it can be in (six states share one anatomy).
+/// How one row looks, from the states it can be in. Two shapes (the flat row and the playing
+/// card) share one set of states; selection wins over hover, and the playing card keeps its fill.
 struct QueueRowAppearance: Equatable {
-    enum Fill: Equatable { case none, accentTint, overlaySelected, overlayHover }
-    enum Edge: Equatable { case gridLine, accentFill, borderStrong }
+    enum Fill: Equatable { case none, accentTintStrong, overlaySelected, overlayHover }
+    /// `quiet` = 0.5 pt Border (playing card at rest); `borderStrongHairline` = 0.5 pt BorderStrong
+    /// (playing card on hover); `borderStrong` = 1 pt BorderStrong (selected).
+    enum Edge: Equatable {
+        case none, quiet, borderStrongHairline, borderStrong
+
+        var lineWidth: CGFloat {
+            switch self {
+            case .none: return 0
+            case .quiet, .borderStrongHairline: return DWBMetrics.queuePlayingEdge
+            case .borderStrong: return 1
+            }
+        }
+    }
     enum LeadingGlyph: Equatable { case none, playing, failed }
 
     let fill: Fill
     let edge: Edge
     let showsCurrentBar: Bool
+    /// The 0.5 pt gridLine under a flat row. Never on the playing card, a selected row, or the row
+    /// right above a selected one, so nothing crosses a selected edge.
+    let showsSeparator: Bool
     let leadingGlyph: LeadingGlyph
     let showsBookmark: Bool
     let metadataIsError: Bool
@@ -143,18 +86,25 @@ struct QueueRowAppearance: Equatable {
                      isSelected: Bool,
                      isHovering: Bool,
                      isFailed: Bool,
-                     isBookmarked: Bool) -> QueueRowAppearance {
-        let fill: Fill = isCurrent ? .accentTint
+                     isBookmarked: Bool,
+                     isNextRowSelected: Bool = false) -> QueueRowAppearance {
+        let fill: Fill = isCurrent ? .accentTintStrong
             : isSelected ? .overlaySelected
             : isHovering ? .overlayHover
             : .none
-        let edge: Edge = isSelected ? .borderStrong
-            : isCurrent ? .accentFill
-            : .gridLine
+        let edge: Edge
+        if isSelected {
+            edge = .borderStrong
+        } else if isCurrent {
+            edge = isHovering ? .borderStrongHairline : .quiet
+        } else {
+            edge = .none
+        }
         let glyph: LeadingGlyph = isCurrent ? .playing : (isFailed ? .failed : .none)
         return QueueRowAppearance(fill: fill,
                                   edge: edge,
                                   showsCurrentBar: isCurrent,
+                                  showsSeparator: !isCurrent && !isSelected && !isNextRowSelected,
                                   leadingGlyph: glyph,
                                   showsBookmark: isBookmarked,
                                   metadataIsError: isFailed,
@@ -163,13 +113,21 @@ struct QueueRowAppearance: Equatable {
     }
 }
 
-/// Section rows are either a caps label or a one-line note ("No previous").
+/// Section rows are either a sentence-case label or a one-line note ("No previous").
 enum QueueSectionLabelStyle: Equatable {
-    case capsLabel
-    case emptyNote
+    case label
+    case note
 
+    /// The projection names its sections in caps ("NOW PLAYING"); anything else is a note.
     static func style(forTitle title: String) -> QueueSectionLabelStyle {
-        title == title.uppercased() ? .capsLabel : .emptyNote
+        title == title.uppercased() ? .label : .note
+    }
+
+    /// What the row shows: "Previous", "Now playing", "Up next"; a note is shown as it is.
+    static func displayText(forTitle title: String) -> String {
+        guard style(forTitle: title) == .label else { return title }
+        let lowered = title.lowercased()
+        return lowered.prefix(1).uppercased() + lowered.dropFirst()
     }
 }
 
@@ -186,25 +144,31 @@ enum PrefixNormalization {
     }
 }
 
-/// One marker chip (`N` or `M`) in the footer group.
-struct QueueMarkerChipState: Equatable {
+/// One marker section (`N` or `M`) in the footer's actions row.
+struct QueueMarkerState: Equatable {
     enum Kind: Equatable { case primary, secondary }
+    /// State is a mark, never a fill: a solid dot when every target has the prefix, a ring when only
+    /// some do, nothing otherwise.
+    enum Mark: Equatable { case none, applied, mixed }
 
     let kind: Kind
-    /// The normalized prefix, which is also what pressing the chip applies.
+    /// The normalized prefix, which is also what pressing the section applies.
     let prefix: String
     let label: String
     let isBlank: Bool
     let isApplied: Bool
+    let isMixed: Bool
     let isEnabled: Bool
 
-    /// The key that does the same as the chip. Used only in tooltips; nothing draws it.
+    var mark: Mark { isApplied ? .applied : (isMixed ? .mixed : .none) }
+
+    /// The key that does the same as the section. Used only in tooltips; nothing draws it.
     var keyTag: String { kind == .primary ? "N" : "M" }
 
     private var kindName: String { kind == .primary ? "primary" : "secondary" }
     private var otherKindName: String { kind == .primary ? "secondary" : "primary" }
 
-    /// The chip label: the first 8 characters of the normalized prefix, plus "…" when it is
+    /// The label: the first 8 characters of the normalized prefix, plus "…" when it is
     /// longer, or "—" when blank.
     static func label(forPrefix prefix: String) -> String {
         let t = PrefixNormalization.normalized(prefix)
@@ -212,33 +176,44 @@ struct QueueMarkerChipState: Equatable {
         return t.count <= 8 ? t : String(t.prefix(8)) + "…"
     }
 
-    /// A chip reads "applied" when it has a prefix and every targeted file already starts with it.
+    /// "Applied" when it has a prefix and every targeted file already starts with it.
     static func isApplied(prefix: String, targetNames: [String]) -> Bool {
         let t = PrefixNormalization.normalized(prefix)
         guard !t.isEmpty, !targetNames.isEmpty else { return false }
         return targetNames.allSatisfy { $0.hasPrefix(t) }
     }
 
-    /// A chip is clickable only with a non-blank prefix and at least one item in the queue.
+    /// "Mixed" when it has a prefix and some, but not all, targeted files start with it.
+    static func isMixed(prefix: String, targetNames: [String]) -> Bool {
+        let t = PrefixNormalization.normalized(prefix)
+        guard !t.isEmpty, !targetNames.isEmpty else { return false }
+        let matching = targetNames.filter { $0.hasPrefix(t) }.count
+        return matching > 0 && matching < targetNames.count
+    }
+
+    /// A section is clickable only with a non-blank prefix and at least one item in the queue.
     static func isEnabled(prefix: String, queueHasItems: Bool) -> Bool {
         queueHasItems && !PrefixNormalization.normalized(prefix).isEmpty
     }
 
-    /// The secondary chip is not offered when it equals a non-empty primary prefix.
+    /// The secondary section is not offered when it equals a non-empty primary prefix.
     static func secondaryIsShown(primary: String, secondary: String) -> Bool {
         let p = PrefixNormalization.normalized(primary)
         let s = PrefixNormalization.normalized(secondary)
         return s.isEmpty || s != p
     }
 
-    static func make(kind: Kind, prefix: String, targetNames: [String], queueHasItems: Bool) -> QueueMarkerChipState {
+    /// `targetNames` are the selected files, or the playing file when nothing is selected. With
+    /// nothing targeted the section is disabled.
+    static func make(kind: Kind, prefix: String, targetNames: [String], queueHasItems: Bool) -> QueueMarkerState {
         let t = PrefixNormalization.normalized(prefix)
-        return QueueMarkerChipState(kind: kind,
-                                    prefix: t,
-                                    label: label(forPrefix: prefix),
-                                    isBlank: t.isEmpty,
-                                    isApplied: isApplied(prefix: prefix, targetNames: targetNames),
-                                    isEnabled: isEnabled(prefix: prefix, queueHasItems: queueHasItems))
+        return QueueMarkerState(kind: kind,
+                                prefix: t,
+                                label: label(forPrefix: prefix),
+                                isBlank: t.isEmpty,
+                                isApplied: isApplied(prefix: prefix, targetNames: targetNames),
+                                isMixed: isMixed(prefix: prefix, targetNames: targetNames),
+                                isEnabled: isEnabled(prefix: prefix, queueHasItems: queueHasItems && !targetNames.isEmpty))
     }
 
     var tooltip: String {
@@ -251,72 +226,14 @@ struct QueueMarkerChipState: Equatable {
         return "Apply \(kindName) prefix \(prefix) to selected file"
     }
 
-    /// "applied" or "not applied"; a blank chip has no value.
+    /// "applied", "mixed" (only some selected files have it) or "not applied"; a blank section has no value.
     var accessibilityValue: String? {
-        isBlank ? nil : (isApplied ? "applied" : "not applied")
-    }
-}
-
-/// Which footer variant fits the width. The marker group sits beside Remove with full
-/// Undo, then with glyph-only Undo, then wraps to its own row (full Undo if it fits that
-/// row, else glyph-only). Nothing moves into a menu. The total label takes its own row
-/// when it does not fit between Rescan and Clear Queue.
-struct QueueFooterLayoutPlan: Equatable {
-    var usesCompactIcons: Bool
-    var usesCompactUndo: Bool
-    var groupWraps: Bool
-    var totalOnOwnRow: Bool
-
-    static func usesCompactIcons(width: CGFloat) -> Bool {
-        width < QueuePanelMetrics.compactIconsBelowWidth
-    }
-
-    /// All widths are in points. `rescanWidth` and `clearWidth` are the widths at the
-    /// compact-icon setting that `usesCompactIcons(width:)` gives for `width`.
-    static func make(width: CGFloat,
-                     removeButtonWidth: CGFloat,
-                     fullGroupWidth: CGFloat,
-                     compactUndoGroupWidth: CGFloat,
-                     rescanWidth: CGFloat,
-                     totalWidth: CGFloat,
-                     clearWidth: CGFloat) -> QueueFooterLayoutPlan {
-        let gap = QueuePanelMetrics.footerRowGap
-        let rowWidth = width - QueuePanelMetrics.footerHorizontalPadding * 2
-        let besideRemove = rowWidth - removeButtonWidth - gap
-
-        var compactUndo = false
-        var wraps = false
-        if fullGroupWidth <= besideRemove {
-            compactUndo = false
-        } else if compactUndoGroupWidth <= besideRemove {
-            compactUndo = true
-        } else {
-            wraps = true
-            compactUndo = fullGroupWidth > rowWidth
+        if isBlank { return nil }
+        switch mark {
+        case .applied: return "applied"
+        case .mixed: return "mixed, some selected files have it"
+        case .none: return "not applied"
         }
-
-        // Rescan, total, divider, Clear Queue: three gaps between four items.
-        let inlineTotalRow = rescanWidth + totalWidth + QueuePanelMetrics.footerDividerWidth + clearWidth + gap * 3
-        return QueueFooterLayoutPlan(usesCompactIcons: usesCompactIcons(width: width),
-                                     usesCompactUndo: compactUndo,
-                                     groupWraps: wraps,
-                                     totalOnOwnRow: inlineTotalRow > rowWidth)
-    }
-}
-
-/// The footer's single total label.
-enum QueueFooterText {
-    static func itemCountText(_ count: Int) -> String {
-        count == 1 ? "1 item" : "\(count) items"
-    }
-
-    /// `Total: <duration> | <N> items`, or `Total: <duration> | <v>/<N> shown` while a
-    /// search or filter is active.
-    static func total(duration: String, itemCount: Int, visibleCount: Int, isFiltered: Bool) -> String {
-        if isFiltered {
-            return "Total: \(duration) | \(visibleCount)/\(itemCount) shown"
-        }
-        return "Total: \(duration) | \(itemCountText(itemCount))"
     }
 }
 
@@ -336,7 +253,7 @@ enum RailPrefixButtons {
     static func showsSecondary(primary: String, secondary: String, prefixButtonsEnabled: Bool) -> Bool {
         prefixButtonsEnabled
             && !PrefixNormalization.normalized(secondary).isEmpty
-            && QueueMarkerChipState.secondaryIsShown(primary: primary, secondary: secondary)
+            && QueueMarkerState.secondaryIsShown(primary: primary, secondary: secondary)
     }
 
     enum Slot { case primary, secondary }
@@ -393,14 +310,14 @@ enum QueueSearchHighlight {
     }
 }
 
-/// The two filtered empty states: a neutral 44 pt circle with a glyph, the title and one
-/// button. (An empty queue keeps its own state with the app icon.)
+/// The two filtered empty states (§10.6): a neutral 44 pt circle with a glyph, the title and one
+/// button. (An empty queue keeps its own state with the faded app icon.)
 enum QueueFilteredEmptyState: Equatable {
     case noMatches
     case noBookmarks
 
-    static let circleDiameter: CGFloat = 44
-    static let glyphSize: CGFloat = 18
+    static let circleDiameter = DWBMetrics.queueEmptyCircle
+    static let glyphSize = DWBMetrics.queueEmptyGlyph
 
     /// A search query always reads as "no matching files"; only a bookmark filter on its own
     /// reads as "no bookmarked media".
@@ -426,30 +343,7 @@ enum QueueFilteredEmptyState: Equatable {
     var symbolName: String {
         switch self {
         case .noMatches: return "magnifyingglass"
-        case .noBookmarks: return "bookmark.slash"
+        case .noBookmarks: return "bookmark"
         }
-    }
-}
-
-/// The drop line shown between rows while drag-reordering in Manual sort: a 2 pt line in
-/// the row gap with an 8 pt ring at its leading edge, inset 4 pt from the row edges.
-enum QueueDropIndicatorMetrics {
-    static let sideInset: CGFloat = 4
-    static let lineHeight = DWBMetrics.dropLine
-    static let ringDiameter = DWBMetrics.dropRing
-    static let ringBorder: CGFloat = 2
-    /// The dragged row stays in the list at this alpha.
-    static let draggedRowAlpha: CGFloat = 0.4
-
-    /// Ring and line inside a view `width` wide and one ring tall. The line starts under the
-    /// ring (1 pt in from its far edge) and runs to the trailing edge.
-    static func geometry(width: CGFloat) -> (ring: NSRect, line: NSRect) {
-        let ring = NSRect(x: 0, y: 0, width: ringDiameter, height: ringDiameter)
-        let lineX = ringDiameter - 1
-        let line = NSRect(x: lineX,
-                          y: (ringDiameter - lineHeight) / 2,
-                          width: max(0, width - lineX),
-                          height: lineHeight)
-        return (ring, line)
     }
 }

@@ -313,6 +313,14 @@ class PlayerWindowController: NSWindowController {
     private var activeCompletionSequence: CompletionSequence? = nil
     private var playbackCompletionSequence = 0
     private var currentPlaybackSessionID = 0
+    /// P146: raw value of the last player state seen in `mediaPlayerStateChanged`. Set on the main
+    /// queue from the already captured state; the start-stall console warnings read it, nothing else.
+    private var lastSeenPlayerStateRaw = -1
+    /// P146: writes the "start never reached playing" console warnings. Never touches the player.
+    private lazy var startStallWatch = PlaybackStartStallWatch(
+        currentSession: { [weak self] in self?.currentPlaybackSessionID ?? 0 },
+        lastSeenStateRaw: { [weak self] in self?.lastSeenPlayerStateRaw ?? -1 },
+        emitWarning: { DebugConsoleController.log(level: .warning, category: "playback", message: $0) })
 
     /// Retained until VLCKit acknowledges an explicit resume, or until this
     /// media session is reset. This prevents an explicit command's delayed
@@ -611,6 +619,12 @@ class PlayerWindowController: NSWindowController {
         }
         queuePanelResizeHandle.onReset = { [weak self] in
             self?.resetQueuePanelWidth()
+        }
+        queuePanelResizeHandle.onNudge = { [weak self] delta in
+            self?.queuePanelResizeNudged(by: delta)
+        }
+        queuePanelResizeHandle.currentWidthProvider = { [weak self] in
+            self?.queuePage.frame.width ?? 0
         }
         cv.addSubview(queuePanelResizeHandle, positioned: .above, relativeTo: queuePage)
 
@@ -1088,14 +1102,21 @@ class PlayerWindowController: NSWindowController {
     /// act on the same targets as the queue footer chips: the selected queue rows, or the
     /// current item when nothing is selected or the Queue Page is closed. `R` opens the rename
     /// sheet for the one selected row, else for the current file.
-    func performPrefixAction(_ action: PrefixKeyRouting.Action, source: String) {
+    ///
+    /// `origin` says which control the press came from. The rail buttons and the `N`/`M` keys on
+    /// the video and image pages use the default `.playerControl`, which may advance when
+    /// "Advance after prefix" is on. The Queue Page table passes `.queuePage`, which never does.
+    func performPrefixAction(_ action: PrefixKeyRouting.Action, source: String,
+                             origin: PrefixPressOrigin = .playerControl) {
         switch action {
         case .primaryPrefix:
             DebugConsoleController.log("rename", "prefixAction: primary source=\(source)")
-            applyPrefix(indices: prefixTargetDisplayIndices(), invokedPrimary: true)
+            applyPrefix(indices: prefixTargetDisplayIndices(), invokedPrimary: true,
+                        origin: origin, source: source)
         case .secondaryPrefix:
             DebugConsoleController.log("rename", "prefixAction: secondary source=\(source)")
-            applyPrefix(indices: prefixTargetDisplayIndices(), invokedPrimary: false)
+            applyPrefix(indices: prefixTargetDisplayIndices(), invokedPrimary: false,
+                        origin: origin, source: source)
         case .rename:
             let selected = isQueuePageOpen ? queuePage.selectedDisplayIndices() : []
             if let row = PrefixKeyRouting.selectedRenameRow(selectedDisplayIndices: selected) {
@@ -1867,6 +1888,16 @@ class PlayerWindowController: NSWindowController {
         queuePanelWidthFraction = QueuePanelWidthPolicy.customFraction(forEdgeX: edgeX,
                                                                        contentWidth: cv.bounds.width)
         layoutPlayerViews()
+    }
+
+    /// A keyboard or VoiceOver resize of the divider: the same clamp and snap as a drag.
+    private func queuePanelResizeNudged(by delta: CGFloat) {
+        guard let cv = window?.contentView, isQueuePageOpen, layoutMode != .fullscreen else { return }
+        queuePanelWidthFraction = QueuePanelWidthPolicy.customFraction(afterResizingBy: delta,
+                                                                       currentWidth: queuePage.frame.width,
+                                                                       contentWidth: cv.bounds.width)
+        layoutPlayerViews()
+        logQueuePanelWidth(event: "key")
     }
 
     private func resetQueuePanelWidth() {
@@ -3319,6 +3350,7 @@ class PlayerWindowController: NSWindowController {
             let kind = MediaFileSupport.isGIF(url) ? "gif" : "image"
             DebugConsoleController.log("media",
                                        "\(kind)Start: \(url.lastPathComponent) dur=\(imageMetadata.displayString) reason=\(startReason)")
+            startStallWatch.nonVideoSessionStarted()
             currentDurationIsProvisional = false
             updateDurationCache(for: url, metadata: imageMetadata)
             logPlaybackQueueSnapshot("playCurrentItem")
@@ -3341,6 +3373,10 @@ class PlayerWindowController: NSWindowController {
 
         // Video path — clear any active image state then use VLC.
         DebugConsoleController.log("media", "videoStart: window=\(debugIdentity) file=\(url.lastPathComponent) session=\(currentPlaybackSessionID) reason=\(startReason) audio=\(audioStateDescription)")
+        startStallWatch.videoStarted(windowID: debugIdentity,
+                                     session: currentPlaybackSessionID,
+                                     file: url.lastPathComponent,
+                                     volume: currentItemVolumeKind)
         clearImageSlideshowState()
 
         let cachedDuration = durationCache[url]
@@ -3795,6 +3831,8 @@ class PlayerWindowController: NSWindowController {
         guard currentPlaybackSessionID == handshake.expectedSessionID else {
             NSLog("[dwb-playback] handshakeCheck: id=%d reason=%@ session moved on — abandoning",
                   handshake.id, handshake.reason)
+            logHandshakeStep(.info, step: "handshake-abandoned", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                             timeMs: timeMs, position: position, detail: "cause=session-moved currentSession=\(currentPlaybackSessionID)")
             cancelPlaybackStartHandshake(reason: "session-moved", suppressLog: true)
             clearCompletionSequence(reason: "handshake-session-moved", suppressLog: true)
             return
@@ -3815,6 +3853,8 @@ class PlayerWindowController: NSWindowController {
             } else {
                 NSLog("[dwb-playback] handshakeCheck: id=%d reason=%@ media changed before start — abandoning",
                       handshake.id, handshake.reason)
+                logHandshakeStep(.info, step: "handshake-abandoned", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                                 timeMs: timeMs, position: position, detail: "cause=media-changed")
                 cancelPlaybackStartHandshake(reason: "media-changed", suppressLog: true)
                 clearCompletionSequence(reason: "handshake-media-changed", suppressLog: true)
             }
@@ -3880,6 +3920,8 @@ class PlayerWindowController: NSWindowController {
                       handshake.id,
                       handshake.reason,
                       handshake.expectedURL.lastPathComponent)
+                logHandshakeStep(.warning, step: "handshake-recovery", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                                 timeMs: timeMs, position: position, detail: "recovery=fresh-player-after-start-window")
                 rebuildPlayerAfterFailedStart(for: handshake)
                 schedulePlaybackStartHandshakeCheck(for: handshake.id)
             case .failAndStop, .failAndSkip:
@@ -3888,6 +3930,8 @@ class PlayerWindowController: NSWindowController {
                       handshake.reason,
                       handshake.expectedURL.lastPathComponent,
                       failureSource.rawValue)
+                logHandshakeStep(.warning, step: "handshake-start-window-expired", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                                 timeMs: timeMs, position: position, detail: "source=\(failureSource.rawValue)")
                 cancelPlaybackStartHandshake(reason: "start-window-expired", suppressLog: true)
                 schedulePlaybackFailureAutoSkip(failedURL: handshake.expectedURL,
                                                 failedSessionID: handshake.expectedSessionID,
@@ -3908,6 +3952,8 @@ class PlayerWindowController: NSWindowController {
                       handshake.expectedURL.lastPathComponent,
                       timeMs,
                       position)
+                logHandshakeStep(.info, step: "handshake-progress-retry", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                                 timeMs: timeMs, position: position, detail: "retry=\(handshake.progressRetryCount)")
                 player.play()
                 schedulePlaybackStartHandshakeCheck(for: handshake.id)
                 return
@@ -3923,6 +3969,8 @@ class PlayerWindowController: NSWindowController {
                       handshake.id,
                       handshake.reason,
                       handshake.expectedURL.lastPathComponent)
+                logHandshakeStep(.warning, step: "handshake-recovery", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                                 timeMs: timeMs, position: position, detail: "recovery=fresh-player")
                 rebuildPlayerAfterFailedStart(for: handshake)
                 schedulePlaybackStartHandshakeCheck(for: handshake.id)
                 return
@@ -3947,6 +3995,8 @@ class PlayerWindowController: NSWindowController {
                   handshake.reason,
                   handshake.playRetryCount,
                   handshake.expectedURL.lastPathComponent)
+            logHandshakeStep(.info, step: "handshake-play-retry", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                             timeMs: timeMs, position: position, detail: "retry=\(handshake.playRetryCount)")
             player.play()
             schedulePlaybackStartHandshakeCheck(for: handshake.id)
             return
@@ -3961,6 +4011,8 @@ class PlayerWindowController: NSWindowController {
                   handshake.id,
                   handshake.reason,
                   handshake.expectedURL.lastPathComponent)
+            logHandshakeStep(.warning, step: "handshake-recovery", handshake: handshake, stateRaw: stateRaw, isPlaying: started,
+                             timeMs: timeMs, position: position, detail: "recovery=rebuilding-player")
             rebuildPlayerAfterFailedStart(for: handshake)
             schedulePlaybackStartHandshakeCheck(for: handshake.id)
             return
@@ -3974,6 +4026,22 @@ class PlayerWindowController: NSWindowController {
         schedulePlaybackFailureAutoSkip(failedURL: handshake.expectedURL,
                                         failedSessionID: handshake.expectedSessionID,
                                         source: "handshake-no-playing")
+    }
+
+    /// P146: one Debug Console line for a trouble step of the start handshake, next to its `NSLog`.
+    /// Uses only values `verifyPlaybackStartHandshake` has already read; it never touches the player.
+    private func logHandshakeStep(_ level: DebugLevel,
+                                  step: String,
+                                  handshake: PlaybackStartHandshake,
+                                  stateRaw: Int,
+                                  isPlaying: Bool,
+                                  timeMs: Int,
+                                  position: Float,
+                                  detail: String = "") {
+        let suffix = detail.isEmpty ? "" : " \(detail)"
+        DebugConsoleController.log(level: level,
+                                   category: "playback",
+                                   message: "\(step): window=\(debugIdentity) file=\(handshake.expectedURL.lastPathComponent) session=\(handshake.expectedSessionID) reason=\(handshake.reason) state=\(stateRaw) isPlaying=\(isPlaying ? 1 : 0) timeMs=\(timeMs) pos=\(String(format: "%.3f", position))\(suffix)")
     }
 
     private func rebuildPlayerAfterFailedStart(for handshake: PlaybackStartHandshake) {
@@ -4887,6 +4955,7 @@ extension PlayerWindowController: NSWindowDelegate {
         // Closing a window leaves nothing running: no playback, timer, work item,
         // observer, or sleep assertion outlives it (P136).
         isWindowClosed = true
+        startStallWatch.windowClosed()
         cancelPendingFolderScan()
         resetPlaybackCompletionSignals(reason: "window-will-close")
         queuedPlaybackCommands.removeAll()
@@ -5172,6 +5241,7 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
         // M6: mark transport dirty; the 0.25 s timer is the regular consumer.
         DispatchQueue.main.async { [weak self] in
             self?.needsTransportUpdate = true
+            self?.lastSeenPlayerStateRaw = capturedState.rawValue
         }
 
         // Debug Console: one line per settled state. Opening and buffering are too chatty.
@@ -5210,6 +5280,9 @@ extension PlayerWindowController: VLCMediaPlayerDelegate {
             #endif
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                if !self.currentItemIsImage, capturedMediaURL?.path == self.currentMediaURL?.path {
+                    self.startStallWatch.playingSeen(session: self.currentPlaybackSessionID)
+                }
                 if let intent = self.explicitPlayPauseIntent,
                    intent.target == .play,
                    intent.sessionID == self.currentPlaybackSessionID,
@@ -5449,15 +5522,15 @@ extension PlayerWindowController: QueuePageViewDelegate {
 
     /// One-click custom prefix rename. Applies toggle/swap policy to all targets (multi-select safe).
     func queuePage(_ view: QueuePageView, didRequestCustomPrefixRenameAt indices: [Int]) {
-        applyPrefix(indices: indices, invokedPrimary: true)
+        applyPrefix(indices: indices, invokedPrimary: true, origin: .queuePage, source: "queuePage")
     }
 
     func queuePage(_ view: QueuePageView, didRequestSecondaryCustomPrefixRenameAt indices: [Int]) {
-        applyPrefix(indices: indices, invokedPrimary: false)
+        applyPrefix(indices: indices, invokedPrimary: false, origin: .queuePage, source: "queuePage")
     }
 
     /// The single function behind the footer chips, the `N`/`M` keys and the rail buttons.
-    private func applyPrefix(indices: [Int], invokedPrimary: Bool) {
+    private func applyPrefix(indices: [Int], invokedPrimary: Bool, origin: PrefixPressOrigin, source: String) {
         let primary   = SettingsWindowController.customPrefixValue()
         let secondary = SettingsWindowController.customPrefixSecondaryValue()
         let tag = invokedPrimary ? "customPrefix" : "customPrefixSecondary"
@@ -5466,14 +5539,54 @@ extension PlayerWindowController: QueuePageViewDelegate {
             return
         }
         performQueuePagePrefixRename(indices: indices, primary: primary, secondary: secondary,
-                                     invokedPrimary: invokedPrimary, tag: tag)
+                                     invokedPrimary: invokedPrimary, tag: tag,
+                                     origin: origin, source: source)
+    }
+
+    /// Whether "Advance after prefix" is on. Read at the moment of each prefix press.
+    private var advanceAfterPrefixEnabled: Bool {
+        UserDefaults.standard.bool(forKey: SettingsWindowController.advanceAfterPrefixKey)
+    }
+
+    /// Runs after a prefix press has been handled. Asks `PrefixAdvancePolicy` whether to play the
+    /// next item and, if so, advances exactly as the Next button does. Logs nothing when the
+    /// setting is off.
+    private func completePrefixAdvance(origin: PrefixPressOrigin,
+                                       source: String,
+                                       targetDisplayIndices: [Int],
+                                       kind: PrefixTransitionKind,
+                                       renameSucceeded: Bool,
+                                       oldName: String) {
+        let decision = PrefixAdvancePolicy.decide(
+            settingEnabled: advanceAfterPrefixEnabled,
+            origin: origin,
+            targetDisplayIndices: targetDisplayIndices,
+            currentDisplayIndex: currentDisplayIndex,
+            kind: kind,
+            renameSucceeded: renameSucceeded,
+            hasNextItem: canAdvanceAfterCompletion
+        )
+        switch decision {
+        case .settingOff:
+            return
+        case .skip(let reason):
+            DebugConsoleController.log("rename", "prefixAdvance: skipped reason=\(reason.rawValue)")
+        case .advance:
+            if advanceToNextItem(reason: "prefix-advance") {
+                DebugConsoleController.log("rename",
+                    "prefixAdvance: \(oldName) → next displayIdx=\(currentDisplayIndex) source=\(source)")
+            } else {
+                DebugConsoleController.log("rename", "prefixAdvance: skipped reason=\(PrefixAdvanceSkipReason.noNextItem.rawValue)")
+            }
+        }
     }
 
     /// Shared implementation for queue-page prefix rename (primary and secondary).
     ///
     /// Applies the toggle/swap prefix-transition policy to each target independently.
     /// Single-file renames proceed immediately; multi-file renames require confirmation.
-    private func performQueuePagePrefixRename(indices: [Int], primary: String, secondary: String, invokedPrimary: Bool, tag: String) {
+    private func performQueuePagePrefixRename(indices: [Int], primary: String, secondary: String, invokedPrimary: Bool, tag: String,
+                                              origin: PrefixPressOrigin, source: String) {
         guard let win = window else { return }
 
         // Resolve display indices to (pbIdx, url) pairs.
@@ -5488,11 +5601,13 @@ extension PlayerWindowController: QueuePageViewDelegate {
 
         // Apply the toggle/swap transition to each target independently.
         // Items where calculatePrefixTransition returns nil are no-ops (no change needed).
-        let pendingRenames: [(pbIdx: Int, oldName: String, newName: String)] = targets.compactMap { target in
+        let pendingRenames: [(pbIdx: Int, oldName: String, newName: String, kind: PrefixTransitionKind)] = targets.compactMap { target in
             guard let newName = MediaFileSupport.calculatePrefixTransition(
                 originalURL: target.url, primary: primary, secondary: secondary, invokedPrimary: invokedPrimary
+            ), let kind = MediaFileSupport.prefixTransitionKind(
+                originalURL: target.url, primary: primary, secondary: secondary, invokedPrimary: invokedPrimary
             ) else { return nil }
-            return (pbIdx: target.pbIdx, oldName: target.url.lastPathComponent, newName: newName)
+            return (pbIdx: target.pbIdx, oldName: target.url.lastPathComponent, newName: newName, kind: kind)
         }
 
         guard !pendingRenames.isEmpty else {
@@ -5509,6 +5624,8 @@ extension PlayerWindowController: QueuePageViewDelegate {
                 presentRenameAlert(title: "Cannot Rename",
                                    message: "The file \"\(r.oldName)\" could not be found. No files were renamed.",
                                    window: win)
+                completePrefixAdvance(origin: origin, source: source, targetDisplayIndices: indices,
+                                      kind: r.kind, renameSucceeded: false, oldName: r.oldName)
                 return
             }
             let dir = url.deletingLastPathComponent()
@@ -5518,12 +5635,16 @@ extension PlayerWindowController: QueuePageViewDelegate {
                 presentRenameAlert(title: "Cannot Rename",
                                    message: "Two selected files would produce the same destination name \"\(r.newName)\". No files were renamed.",
                                    window: win)
+                completePrefixAdvance(origin: origin, source: source, targetDisplayIndices: indices,
+                                      kind: r.kind, renameSucceeded: false, oldName: r.oldName)
                 return
             }
             if FileManager.default.fileExists(atPath: destURL.path) {
                 presentRenameAlert(title: "Cannot Rename",
                                    message: "A file named \"\(r.newName)\" already exists. No files were renamed.",
                                    window: win)
+                completePrefixAdvance(origin: origin, source: source, targetDisplayIndices: indices,
+                                      kind: r.kind, renameSucceeded: false, oldName: r.oldName)
                 return
             }
         }
@@ -5543,10 +5664,18 @@ extension PlayerWindowController: QueuePageViewDelegate {
             let r = pendingRenames[0]
             DebugConsoleController.log("rename",
                 "\(tag): \(r.oldName) → \(r.newName) source=queuePage")
-            if renameFile(at: r.pbIdx, to: r.newName) {
+            let renamed = renameFile(at: r.pbIdx, to: r.newName)
+            if renamed {
                 recordMarkerRename(entries: undoEntries)
             }
+            completePrefixAdvance(origin: origin, source: source, targetDisplayIndices: indices,
+                                  kind: r.kind, renameSucceeded: renamed, oldName: r.oldName)
         } else {
+            // Multi-file never advances: the batch confirmation runs later and renames other rows.
+            if advanceAfterPrefixEnabled {
+                DebugConsoleController.log("rename",
+                    "prefixAdvance: skipped reason=\(PrefixAdvanceSkipReason.queueTarget.rawValue)")
+            }
             // Multi-file: show confirmation before any filesystem mutation.
             let invokedPrefix = invokedPrimary ? primary : secondary
             let previewRenames = pendingRenames.map { (old: $0.oldName, new: $0.newName) }
@@ -5807,7 +5936,7 @@ extension PlayerWindowController: QueuePageViewDelegate {
 
     /// Footer Undo: the same undo as Command-Z.
     func queuePage(_ view: QueuePageView, didRequestPrefixKeyAction action: PrefixKeyRouting.Action) {
-        performPrefixAction(action, source: "queueTable-key")
+        performPrefixAction(action, source: "queueTable-key", origin: .queuePage)
     }
 
     func queuePageDidRequestUndoMarkerRename(_ view: QueuePageView) {

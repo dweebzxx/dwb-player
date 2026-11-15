@@ -33,7 +33,7 @@ struct DebugLogBuffer {
     static let mainLimit = 1000
     // Slack so we trim in bulk (O(1) amortized) instead of removing one element per overflow log.
     static let mainSlack = 256
-    static let contextLimit = 50
+    static let contextLimit = 400
     /// Very frequent layout diagnostics: info lines in this category are never kept as context.
     static let contextExcludedCategory = "queue-geometry"
 

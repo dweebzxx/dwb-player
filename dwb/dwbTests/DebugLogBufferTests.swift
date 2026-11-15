@@ -28,13 +28,54 @@ final class DebugLogBufferTests: XCTestCase {
     }
 
     // (b)
-    func testContextKeepsNewestFiftyAndDropsOldest() {
+    func testContextKeepsNewestFourHundredAndDropsOldest() {
         var buffer = DebugLogBuffer()
-        for i in 1...80 { buffer.append(entry("line \(i)")) }
+        for i in 1...500 { buffer.append(entry("line \(i)")) }
 
+        XCTAssertEqual(DebugLogBuffer.contextLimit, 400)
         XCTAssertEqual(buffer.context.count, DebugLogBuffer.contextLimit)
-        XCTAssertEqual(messages(buffer.context), numbered(31...80))
+        XCTAssertEqual(messages(buffer.context), numbered(101...500))
         XCTAssertEqual(buffer.entries.count, 0)
+    }
+
+    // P146 R3 / R4
+    func testFourHundredInfoLinesAreAllKeptAndThe401stPushesOutTheOldest() {
+        var buffer = DebugLogBuffer()
+        for i in 1...400 { buffer.append(entry("line \(i)")) }
+        XCTAssertEqual(messages(buffer.context), numbered(1...400))
+
+        buffer.append(entry("line 401"))
+        XCTAssertEqual(buffer.context.count, 400)
+        XCTAssertEqual(messages(buffer.context), numbered(2...401))
+    }
+
+    func testWarningFlushesAllFourHundredContextLinesInTimeOrder() {
+        var buffer = DebugLogBuffer()
+        for i in 1...400 { buffer.append(entry("line \(i)")) }
+        buffer.append(entry("start-stalled", level: .warning))
+
+        XCTAssertEqual(messages(buffer.entries), numbered(1...400) + ["start-stalled"])
+        XCTAssertTrue(buffer.context.isEmpty)
+    }
+
+    func testQueueGeometryInfoIsStillNeverKeptAsContextAtFourHundred() {
+        var buffer = DebugLogBuffer()
+        for i in 1...400 {
+            buffer.append(entry("geometry \(i)", category: "queue-geometry"))
+            buffer.append(entry("line \(i)"))
+        }
+        XCTAssertEqual(messages(buffer.context), numbered(1...400))
+        XCTAssertTrue(buffer.context.allSatisfy { $0.category != DebugLogBuffer.contextExcludedCategory })
+    }
+
+    func testTurningRecordingOnKeepsAllFourHundredContextLines() {
+        var buffer = DebugLogBuffer()
+        for i in 1...450 { buffer.append(entry("line \(i)")) }
+
+        buffer.setRecordingAll(true)
+
+        XCTAssertTrue(buffer.context.isEmpty)
+        XCTAssertEqual(messages(buffer.entries), numbered(51...450))
     }
 
     // (c)

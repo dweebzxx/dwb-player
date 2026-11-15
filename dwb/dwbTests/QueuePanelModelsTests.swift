@@ -6,41 +6,67 @@ final class QueuePanelModelsTests: XCTestCase {
     // MARK: Row states
 
     private func look(current: Bool = false, selected: Bool = false, hover: Bool = false,
-                      failed: Bool = false, bookmarked: Bool = false) -> QueueRowAppearance {
+                      failed: Bool = false, bookmarked: Bool = false,
+                      nextSelected: Bool = false) -> QueueRowAppearance {
         QueueRowAppearance.make(isCurrent: current, isSelected: selected, isHovering: hover,
-                                isFailed: failed, isBookmarked: bookmarked)
+                                isFailed: failed, isBookmarked: bookmarked, isNextRowSelected: nextSelected)
     }
 
-    func testDefaultRowHasNoFillAndAGridLineEdge() {
+    func testFlatRowAtRestHasNoFillNoEdgeAndASeparator() {
         let row = look()
         XCTAssertEqual(row.fill, .none)
-        XCTAssertEqual(row.edge, .gridLine)
+        XCTAssertEqual(row.edge, .none)
+        XCTAssertTrue(row.showsSeparator)
         XCTAssertFalse(row.showsCurrentBar)
         XCTAssertEqual(row.leadingGlyph, .none)
         XCTAssertEqual(row.filenameWeight, .medium)
     }
 
-    func testCurrentRowUsesAccentTintEdgeBarAndPlayGlyph() {
+    func testPlayingCardUsesUniformAccentTintStrongAQuietEdgeAndTheBar() {
         let row = look(current: true)
-        XCTAssertEqual(row.fill, .accentTint)
-        XCTAssertEqual(row.edge, .accentFill)
+        XCTAssertEqual(row.fill, .accentTintStrong)
+        XCTAssertEqual(row.edge, .quiet)
+        XCTAssertEqual(row.edge.lineWidth, 0.5)
         XCTAssertTrue(row.showsCurrentBar)
+        XCTAssertFalse(row.showsSeparator)
         XCTAssertEqual(row.leadingGlyph, .playing)
         XCTAssertEqual(row.filenameWeight, .semibold)
     }
 
-    func testSelectedRowUsesOverlaySelectedAndBorderStrong() {
+    func testPlayingCardEdgeBecomesBorderStrongOnHoverAndOneWholePointWhenSelected() {
+        XCTAssertEqual(look(current: true, hover: true).edge, .borderStrongHairline)
+        XCTAssertEqual(look(current: true, hover: true).edge.lineWidth, 0.5)
+        let selected = look(current: true, selected: true, hover: true)
+        XCTAssertEqual(selected.edge, .borderStrong)
+        XCTAssertEqual(selected.edge.lineWidth, 1)
+        // The card keeps its fill; selection adds the edge, it does not swap the fill.
+        XCTAssertEqual(selected.fill, .accentTintStrong)
+    }
+
+    func testSelectedFlatRowUsesOverlaySelectedAndAOnePointBorderStrongEdge() {
         let row = look(selected: true)
         XCTAssertEqual(row.fill, .overlaySelected)
         XCTAssertEqual(row.edge, .borderStrong)
+        XCTAssertEqual(row.edge.lineWidth, 1)
     }
 
-    func testHoverRowUsesOverlayHover() {
+    func testHoverRowUsesOverlayHoverAndNoEdge() {
         XCTAssertEqual(look(hover: true).fill, .overlayHover)
+        XCTAssertEqual(look(hover: true).edge, .none)
     }
 
     func testSelectionWinsOverHover() {
         XCTAssertEqual(look(selected: true, hover: true).fill, .overlaySelected)
+    }
+
+    func testSeparatorIsHiddenOnASelectedRowAndAboveOneAndOnThePlayingCard() {
+        XCTAssertTrue(look().showsSeparator)
+        XCTAssertFalse(look(selected: true).showsSeparator)
+        XCTAssertFalse(look(selected: true, hover: true).showsSeparator)
+        XCTAssertFalse(look(nextSelected: true).showsSeparator)
+        XCTAssertFalse(look(current: true).showsSeparator)
+        // Hover alone does not hide it.
+        XCTAssertTrue(look(hover: true).showsSeparator)
     }
 
     func testFailedRowShowsWarningGlyphAndErrorMetadata() {
@@ -61,63 +87,25 @@ final class QueuePanelModelsTests: XCTestCase {
         XCTAssertFalse(look().showsBookmark)
     }
 
-    // MARK: Geometry
+    // MARK: Sections and header metrics
 
-    func testRowMetricsMatchTheDesignSystem() {
-        XCTAssertEqual(QueuePanelMetrics.rowHeight, 56)
-        XCTAssertEqual(QueuePanelMetrics.rowInset, 4)
-        XCTAssertEqual(QueuePanelMetrics.tableRowHeight, 64)
+    func testHeaderIsFiftyTwoPointsAndTheSectionKernBelongsToSettingsCaptions() {
         XCTAssertEqual(QueuePanelMetrics.headerHeight, 52)
-        XCTAssertEqual(QueuePanelMetrics.searchPillHeight, 28)
-    }
-
-    func testPillRectIsFiftySixPointsTallInsideTheTableRow() {
-        let rect = QueuePanelMetrics.pillRect(inRowBounds: NSRect(x: 0, y: 0, width: 400, height: 64))
-        XCTAssertEqual(rect.height, 56)
-        XCTAssertEqual(rect.minY, 4)
-        XCTAssertEqual(rect.minX, 12)
-        XCTAssertEqual(rect.maxX, 392)
-    }
-
-    func testFooterSpacingMatchesTheSharedFooterSpec() {
-        XCTAssertEqual(QueuePanelMetrics.footerHorizontalPadding, 12)
-        XCTAssertEqual(QueuePanelMetrics.footerTopPadding, 8)
-        XCTAssertEqual(QueuePanelMetrics.footerBottomPadding, 10)
-        XCTAssertEqual(QueuePanelMetrics.footerRowSpacing, 6)
-        XCTAssertEqual(QueuePanelMetrics.footerRowGap, 8)
-        XCTAssertEqual(QueuePanelMetrics.markerGroupHeight, 28)
-        XCTAssertEqual(QueuePanelMetrics.markerChipHeight, 22)
-    }
-
-    func testGroupOutlineAndEveryHighlightShareThePillRadiusToken() {
-        XCTAssertEqual(QueuePanelMetrics.markerGroupCornerRadius, DWBMetrics.radiusPill)
-        XCTAssertEqual(QueuePanelMetrics.markerHighlightCornerRadius, QueuePanelMetrics.markerGroupCornerRadius)
-        XCTAssertEqual(QueuePanelMetrics.markerHighlightCornerRadius, 12)
-    }
-
-    func testFooterHeightFollowsThePlan() {
-        let beside = QueueFooterLayoutPlan(usesCompactIcons: false, usesCompactUndo: false, groupWraps: false, totalOnOwnRow: false)
-        let ownTotal = QueueFooterLayoutPlan(usesCompactIcons: false, usesCompactUndo: false, groupWraps: false, totalOnOwnRow: true)
-        let wrapped = QueueFooterLayoutPlan(usesCompactIcons: true, usesCompactUndo: true, groupWraps: true, totalOnOwnRow: false)
-        let wrappedOwnTotal = QueueFooterLayoutPlan(usesCompactIcons: true, usesCompactUndo: true, groupWraps: true, totalOnOwnRow: true)
-        // 8 top + 28 marker row + 6 + 26 action row + 10 bottom
-        XCTAssertEqual(QueuePanelMetrics.footerHeight(plan: beside), 78)
-        XCTAssertEqual(QueuePanelMetrics.footerHeight(plan: ownTotal), 78 + 6 + QueuePanelMetrics.footerTotalRowHeight)
-        // Remove row (26) + 6 + group row (28) instead of one 28 pt row.
-        XCTAssertEqual(QueuePanelMetrics.footerHeight(plan: wrapped), 78 + 26 + 6)
-        XCTAssertEqual(QueuePanelMetrics.footerHeight(plan: wrappedOwnTotal),
-                       78 + 26 + 6 + 6 + QueuePanelMetrics.footerTotalRowHeight)
-    }
-
-    func testSectionLabelTracksFourPercentOfTenPoints() {
         XCTAssertEqual(QueuePanelMetrics.sectionLabelKern, 0.4, accuracy: 0.0001)
     }
 
-    func testSectionStyleSeparatesCapsLabelsFromEmptyNotes() {
-        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "PREVIOUS"), .capsLabel)
-        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "NOW PLAYING"), .capsLabel)
-        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "UP NEXT"), .capsLabel)
-        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "No previous"), .emptyNote)
+    func testSectionStyleSeparatesLabelsFromNotes() {
+        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "PREVIOUS"), .label)
+        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "NOW PLAYING"), .label)
+        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "UP NEXT"), .label)
+        XCTAssertEqual(QueueSectionLabelStyle.style(forTitle: "No previous"), .note)
+    }
+
+    func testSectionLabelsAreShownInSentenceCaseAndNotesAreUntouched() {
+        XCTAssertEqual(QueueSectionLabelStyle.displayText(forTitle: "PREVIOUS"), "Previous")
+        XCTAssertEqual(QueueSectionLabelStyle.displayText(forTitle: "NOW PLAYING"), "Now playing")
+        XCTAssertEqual(QueueSectionLabelStyle.displayText(forTitle: "UP NEXT"), "Up next")
+        XCTAssertEqual(QueueSectionLabelStyle.displayText(forTitle: "No previous"), "No previous")
     }
 
     // MARK: Prefix normalization
@@ -147,47 +135,47 @@ final class QueuePanelModelsTests: XCTestCase {
     // MARK: Marker chips
 
     func testChipLabelShowsDashWhenBlank() {
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: ""), "—")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "   "), "—")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "\n "), "—")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: ""), "—")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "   "), "—")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "\n "), "—")
     }
 
     func testChipLabelShowsTheNormalizedPrefixUpToEightCharacters() {
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "keep_"), "keep_")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "keep"), "keep_")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "  keep_  "), "keep_")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "\nkeep_\n"), "keep_")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "keep_"), "keep_")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "keep"), "keep_")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "  keep_  "), "keep_")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "\nkeep_\n"), "keep_")
         // Normalized length 8: no ellipsis.
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "abcdefg_"), "abcdefg_")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "abcdefg"), "abcdefg_")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "abcdefg_"), "abcdefg_")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "abcdefg"), "abcdefg_")
         // Normalized length 9: first eight characters and an ellipsis.
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "abcdefgh"), "abcdefgh…")
-        XCTAssertEqual(QueueMarkerChipState.label(forPrefix: "abcdefgh_"), "abcdefgh…")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "abcdefgh"), "abcdefgh…")
+        XCTAssertEqual(QueueMarkerState.label(forPrefix: "abcdefgh_"), "abcdefgh…")
     }
 
     func testChipIsDisabledWhenBlankOrWhenTheQueueIsEmpty() {
-        XCTAssertFalse(QueueMarkerChipState.isEnabled(prefix: "", queueHasItems: true))
-        XCTAssertFalse(QueueMarkerChipState.isEnabled(prefix: "   ", queueHasItems: true))
-        XCTAssertFalse(QueueMarkerChipState.isEnabled(prefix: "keep_", queueHasItems: false))
-        XCTAssertTrue(QueueMarkerChipState.isEnabled(prefix: "keep_", queueHasItems: true))
-        XCTAssertTrue(QueueMarkerChipState.isEnabled(prefix: "keep", queueHasItems: true))
+        XCTAssertFalse(QueueMarkerState.isEnabled(prefix: "", queueHasItems: true))
+        XCTAssertFalse(QueueMarkerState.isEnabled(prefix: "   ", queueHasItems: true))
+        XCTAssertFalse(QueueMarkerState.isEnabled(prefix: "keep_", queueHasItems: false))
+        XCTAssertTrue(QueueMarkerState.isEnabled(prefix: "keep_", queueHasItems: true))
+        XCTAssertTrue(QueueMarkerState.isEnabled(prefix: "keep", queueHasItems: true))
     }
 
     func testSecondaryChipIsHiddenOnlyWhenItEqualsANonBlankPrimary() {
-        XCTAssertFalse(QueueMarkerChipState.secondaryIsShown(primary: "keep_", secondary: "keep_"))
-        XCTAssertFalse(QueueMarkerChipState.secondaryIsShown(primary: "keep", secondary: " keep__ "))
-        XCTAssertTrue(QueueMarkerChipState.secondaryIsShown(primary: "keep_", secondary: "del_"))
+        XCTAssertFalse(QueueMarkerState.secondaryIsShown(primary: "keep_", secondary: "keep_"))
+        XCTAssertFalse(QueueMarkerState.secondaryIsShown(primary: "keep", secondary: " keep__ "))
+        XCTAssertTrue(QueueMarkerState.secondaryIsShown(primary: "keep_", secondary: "del_"))
         // Blank secondary stays shown (disabled, "—").
-        XCTAssertTrue(QueueMarkerChipState.secondaryIsShown(primary: "keep_", secondary: ""))
-        XCTAssertTrue(QueueMarkerChipState.secondaryIsShown(primary: "", secondary: ""))
-        XCTAssertTrue(QueueMarkerChipState.secondaryIsShown(primary: "", secondary: "del_"))
-        let blank = QueueMarkerChipState.make(kind: .secondary, prefix: "", targetNames: ["a.mp4"], queueHasItems: true)
+        XCTAssertTrue(QueueMarkerState.secondaryIsShown(primary: "keep_", secondary: ""))
+        XCTAssertTrue(QueueMarkerState.secondaryIsShown(primary: "", secondary: ""))
+        XCTAssertTrue(QueueMarkerState.secondaryIsShown(primary: "", secondary: "del_"))
+        let blank = QueueMarkerState.make(kind: .secondary, prefix: "", targetNames: ["a.mp4"], queueHasItems: true)
         XCTAssertEqual(blank.label, "—")
         XCTAssertFalse(blank.isEnabled)
     }
 
     func testBlankPrefixShowsDashAndIsDisabled() {
-        let chip = QueueMarkerChipState.make(kind: .primary, prefix: "   ", targetNames: ["keep_a.mp4"], queueHasItems: true)
+        let chip = QueueMarkerState.make(kind: .primary, prefix: "   ", targetNames: ["keep_a.mp4"], queueHasItems: true)
         XCTAssertEqual(chip.label, "—")
         XCTAssertTrue(chip.isBlank)
         XCTAssertFalse(chip.isEnabled)
@@ -195,108 +183,80 @@ final class QueuePanelModelsTests: XCTestCase {
     }
 
     func testChipCopyForTooltipsAndAccessibility() {
-        let primary = QueueMarkerChipState.make(kind: .primary, prefix: "keep", targetNames: ["a.mp4"], queueHasItems: true)
+        let primary = QueueMarkerState.make(kind: .primary, prefix: "keep", targetNames: ["a.mp4"], queueHasItems: true)
         XCTAssertEqual(primary.tooltip, "Primary prefix “keep_”: add it to the selected file, press again to remove it, or replace the secondary prefix. Shortcut: N")
         XCTAssertEqual(primary.accessibilityLabel, "Apply primary prefix keep_ to selected file")
         XCTAssertEqual(primary.accessibilityValue, "not applied")
-        let applied = QueueMarkerChipState.make(kind: .secondary, prefix: "del_", targetNames: ["del_a.mp4"], queueHasItems: true)
+        let applied = QueueMarkerState.make(kind: .secondary, prefix: "del_", targetNames: ["del_a.mp4"], queueHasItems: true)
         XCTAssertEqual(applied.tooltip, "Secondary prefix “del_”: add it to the selected file, press again to remove it, or replace the primary prefix. Shortcut: M")
         XCTAssertEqual(applied.accessibilityLabel, "Apply secondary prefix del_ to selected file")
         XCTAssertEqual(applied.accessibilityValue, "applied")
-        let blankPrimary = QueueMarkerChipState.make(kind: .primary, prefix: "", targetNames: [], queueHasItems: true)
+        let blankPrimary = QueueMarkerState.make(kind: .primary, prefix: "", targetNames: [], queueHasItems: true)
         XCTAssertEqual(blankPrimary.tooltip, "No primary prefix set. Set one in Settings > Queue & Files.")
         XCTAssertEqual(blankPrimary.accessibilityLabel, "Primary prefix not set")
         XCTAssertNil(blankPrimary.accessibilityValue)
-        let blankSecondary = QueueMarkerChipState.make(kind: .secondary, prefix: " ", targetNames: [], queueHasItems: true)
+        let blankSecondary = QueueMarkerState.make(kind: .secondary, prefix: " ", targetNames: [], queueHasItems: true)
         XCTAssertEqual(blankSecondary.tooltip, "No secondary prefix set. Set one in Settings > Queue & Files.")
         XCTAssertEqual(blankSecondary.accessibilityLabel, "Secondary prefix not set")
     }
 
     func testChipIsAppliedOnlyWhenEveryTargetStartsWithThePrefix() {
-        XCTAssertTrue(QueueMarkerChipState.isApplied(prefix: "keep_", targetNames: ["keep_a.mp4", "keep_b.mp4"]))
-        XCTAssertTrue(QueueMarkerChipState.isApplied(prefix: "keep", targetNames: ["keep_a.mp4"]))
-        XCTAssertFalse(QueueMarkerChipState.isApplied(prefix: "keep_", targetNames: ["keep_a.mp4", "b.mp4"]))
-        XCTAssertFalse(QueueMarkerChipState.isApplied(prefix: "keep_", targetNames: []))
-        XCTAssertFalse(QueueMarkerChipState.isApplied(prefix: "", targetNames: ["a.mp4"]))
+        XCTAssertTrue(QueueMarkerState.isApplied(prefix: "keep_", targetNames: ["keep_a.mp4", "keep_b.mp4"]))
+        XCTAssertTrue(QueueMarkerState.isApplied(prefix: "keep", targetNames: ["keep_a.mp4"]))
+        XCTAssertFalse(QueueMarkerState.isApplied(prefix: "keep_", targetNames: ["keep_a.mp4", "b.mp4"]))
+        XCTAssertFalse(QueueMarkerState.isApplied(prefix: "keep_", targetNames: []))
+        XCTAssertFalse(QueueMarkerState.isApplied(prefix: "", targetNames: ["a.mp4"]))
     }
 
-    // MARK: Footer responsiveness
+    // MARK: Applied, mixed and none (§10.5)
 
-    private func plan(width: CGFloat,
-                      full: CGFloat = 200,
-                      compact: CGFloat = 150,
-                      rescan: CGFloat = 70,
-                      total: CGFloat = 150,
-                      clear: CGFloat = 90) -> QueueFooterLayoutPlan {
-        QueueFooterLayoutPlan.make(width: width, removeButtonWidth: 26, fullGroupWidth: full,
-                                   compactUndoGroupWidth: compact, rescanWidth: rescan,
-                                   totalWidth: total, clearWidth: clear)
+    private func state(_ prefix: String, _ names: [String], hasItems: Bool = true) -> QueueMarkerState {
+        QueueMarkerState.make(kind: .primary, prefix: prefix, targetNames: names, queueHasItems: hasItems)
     }
 
-    func testFullGroupSitsBesideRemoveWhenItFits() {
-        // Full group needs 200 + 26 + 8 gap + 24 padding = 258.
-        let p = plan(width: 258)
-        XCTAssertFalse(p.usesCompactUndo)
-        XCTAssertFalse(p.groupWraps)
+    func testMarkIsAppliedWhenEveryTargetHasThePrefix() {
+        let s = state("keep_", ["keep_a.mp4", "keep_b.mp4"])
+        XCTAssertEqual(s.mark, .applied)
+        XCTAssertTrue(s.isApplied)
+        XCTAssertFalse(s.isMixed)
+        XCTAssertEqual(s.accessibilityValue, "applied")
     }
 
-    func testUndoShrinksToItsGlyphBeforeAnythingWraps() {
-        let p = plan(width: 257)
-        XCTAssertTrue(p.usesCompactUndo)
-        XCTAssertFalse(p.groupWraps)
-        // Compact group needs 150 + 26 + 8 + 24 = 208.
-        XCTAssertFalse(plan(width: 208).groupWraps)
-        XCTAssertTrue(plan(width: 208).usesCompactUndo)
+    func testMarkIsMixedWhenOnlySomeTargetsHaveThePrefix() {
+        let s = state("keep_", ["keep_a.mp4", "b.mp4", "c.mp4"])
+        XCTAssertEqual(s.mark, .mixed)
+        XCTAssertFalse(s.isApplied)
+        XCTAssertTrue(s.isMixed)
+        XCTAssertEqual(s.accessibilityValue, "mixed, some selected files have it")
     }
 
-    func testGroupWrapsToItsOwnRowWithFullUndoWhenThatRowFits() {
-        let p = plan(width: 207)
-        XCTAssertTrue(p.groupWraps)
-        // The row holds 207 - 24 = 183 pt, which fits the compact group but not the full one.
-        XCTAssertTrue(p.usesCompactUndo)
-        let roomy = plan(width: 207, full: 180, compact: 150)
-        XCTAssertTrue(roomy.groupWraps)
-        XCTAssertFalse(roomy.usesCompactUndo)
-        // Full group exactly fills the wrapped row: still full Undo.
-        XCTAssertFalse(plan(width: 207, full: 183, compact: 170).usesCompactUndo)
-        XCTAssertTrue(plan(width: 207, full: 184, compact: 170).usesCompactUndo)
+    func testMarkIsNoneWhenNoTargetHasThePrefix() {
+        let s = state("keep_", ["a.mp4", "b.mp4"])
+        XCTAssertEqual(s.mark, .none)
+        XCTAssertEqual(s.accessibilityValue, "not applied")
     }
 
-    func testNothingEverMovesIntoAMenu() {
-        let p = plan(width: 120)
-        XCTAssertTrue(p.groupWraps)
-        XCTAssertTrue(p.usesCompactUndo)
+    func testBlankPrefixHasNoMarkAndNoAccessibilityValue() {
+        let s = state("  ", ["keep_a.mp4"])
+        XCTAssertEqual(s.mark, .none)
+        XCTAssertNil(s.accessibilityValue)
+        XCTAssertFalse(s.isEnabled)
     }
 
-    func testTotalLabelTakesItsOwnRowWhenItDoesNotFitInline() {
-        // 70 + 150 + 1 + 90 + 3 gaps of 8 = 335, plus 24 padding = 359.
-        XCTAssertFalse(plan(width: 359).totalOnOwnRow)
-        XCTAssertTrue(plan(width: 358).totalOnOwnRow)
+    func testNothingTargetedDisablesTheSectionAndShowsNoMark() {
+        let s = state("keep_", [])
+        XCTAssertEqual(s.mark, .none)
+        XCTAssertFalse(s.isEnabled)
+        // An empty queue disables it too, even with a stale target list.
+        XCTAssertFalse(state("keep_", ["keep_a.mp4"], hasItems: false).isEnabled)
+        XCTAssertTrue(state("keep_", ["a.mp4"]).isEnabled)
     }
 
-    func testCompactIconsKeepTheOldThreeHundredNinetyRule() {
-        XCTAssertTrue(QueueFooterLayoutPlan.usesCompactIcons(width: 389))
-        XCTAssertFalse(QueueFooterLayoutPlan.usesCompactIcons(width: 390))
-        XCTAssertTrue(plan(width: 389).usesCompactIcons)
-        XCTAssertFalse(plan(width: 390).usesCompactIcons)
-    }
-
-    // MARK: Total label
-
-    func testTotalTextCountsItems() {
-        XCTAssertEqual(QueueFooterText.total(duration: "00:00:00", itemCount: 0, visibleCount: 0, isFiltered: false),
-                       "Total: 00:00:00 | 0 items")
-        XCTAssertEqual(QueueFooterText.total(duration: "00:03:20", itemCount: 1, visibleCount: 1, isFiltered: false),
-                       "Total: 00:03:20 | 1 item")
-        XCTAssertEqual(QueueFooterText.total(duration: "01:02:03", itemCount: 12, visibleCount: 12, isFiltered: false),
-                       "Total: 01:02:03 | 12 items")
-    }
-
-    func testTotalTextShowsVisibleOverTotalWhileFiltering() {
-        XCTAssertEqual(QueueFooterText.total(duration: "01:02:03", itemCount: 12, visibleCount: 3, isFiltered: true),
-                       "Total: 01:02:03 | 3/12 shown")
-        XCTAssertEqual(QueueFooterText.total(duration: "00:00:00", itemCount: 12, visibleCount: 0, isFiltered: true),
-                       "Total: 00:00:00 | 0/12 shown")
+    func testMixedUsesTheNormalizedPrefix() {
+        XCTAssertTrue(QueueMarkerState.isMixed(prefix: "keep", targetNames: ["keep_a.mp4", "x.mp4"]))
+        XCTAssertFalse(QueueMarkerState.isMixed(prefix: "keep", targetNames: ["keep_a.mp4"]))
+        XCTAssertFalse(QueueMarkerState.isMixed(prefix: "", targetNames: ["keep_a.mp4", "x.mp4"]))
+        XCTAssertFalse(QueueMarkerState.isMixed(prefix: "keep", targetNames: []))
     }
 
     // MARK: Rail prefix buttons
