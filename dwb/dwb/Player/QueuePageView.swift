@@ -1449,7 +1449,6 @@ final class QueuePageTableView: NSTableView {
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
-        super.draggingEnded(sender)
         onDragEnded?()
     }
 

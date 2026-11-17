@@ -37,6 +37,7 @@
 		35A16A15F1B5F3B939EEA05B /* QueueDisplayProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78BD398E5D6D86EE50F1E89E /* QueueDisplayProjection.swift */; };
 		35A5D48C10442F3635EF3B4F /* PlayerWindowTargeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79BAA436D121616AF0B07B75 /* PlayerWindowTargeting.swift */; };
 		3950E29B5496130E87371E2F /* SettingsPagesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B8F4DFDB0D7032E25AE4DE9 /* SettingsPagesModel.swift */; };
+		3DB9459DF265FBBCCDA1C45D /* RailDropdownMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EC07FF26C20CCCE999EFC70 /* RailDropdownMenu.swift */; };
 		3E0BDDAE733D10D8335DAF90 /* MediaFileSupportCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25532C3528A96CA5A7CB56EF /* MediaFileSupportCore.swift */; };
 		406C43AF645082F45763D113 /* VideoSurfaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B57334593EE9F980FF69CA /* VideoSurfaceView.swift */; };
 		44C949CABA5D158791A6B674 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBC53C0EF8397BE64EF0453B /* AppDelegate.swift */; };
@@ -120,6 +121,7 @@
 		F1DCB071ED1D9B9BD16097B5 /* VLCKitSPM in Frameworks */ = {isa = PBXBuildFile; productRef = A18894B0104EF9D2A3883F18 /* VLCKitSPM */; };
 		F29B921283B44712797D6FA1 /* IntakeRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9C943409205144684EC2C7 /* IntakeRecoveryView.swift */; };
 		F4C4D74B374E4EF62ED62049 /* ScaleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5582026B4F107CCD6A68F7 /* ScaleMode.swift */; };
+		F61F179892843FD12A94C10D /* RailOverflowModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68F9410BD7BB52036BB674B7 /* RailOverflowModelTests.swift */; };
 		F756E90BA3E178D147C83B07 /* DebugLogBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C876CFBAD1F720070E7D5F8C /* DebugLogBufferTests.swift */; };
 		F78A7A88E8EC11E7BDBCA148 /* DWBThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A892AB7B2BAF2DD0E4BA30D /* DWBThemeTests.swift */; };
 		FA023828C8FE9D19252DFA0B /* SettingsAdvancedAboutContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9903024106C6F907D2E7D417 /* SettingsAdvancedAboutContent.swift */; };
@@ -152,6 +154,7 @@
 		46F95A3999534816AD5B65D3 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		4AB0FBB5C743B55BE440C890 /* BookmarkStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkStoreTests.swift; sourceTree = "<group>"; };
 		4C0AE690A098932F9FAD5849 /* QueueDisplayProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueDisplayProjectionTests.swift; sourceTree = "<group>"; };
+		4EC07FF26C20CCCE999EFC70 /* RailDropdownMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RailDropdownMenu.swift; sourceTree = "<group>"; };
 		5020E5D67BCF8CE7C3C35657 /* PlaybackStartWindowPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStartWindowPolicy.swift; sourceTree = "<group>"; };
 		5284AC9BAA9F6488B2E8DBA8 /* PlayerWindowTargetingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerWindowTargetingTests.swift; sourceTree = "<group>"; };
 		5554913B50063A6B5259AAAF /* ShortcutsPageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsPageView.swift; sourceTree = "<group>"; };
@@ -160,6 +163,7 @@
 		6415BB98DB5D68093F3D7866 /* PlayerOverlayModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerOverlayModels.swift; sourceTree = "<group>"; };
 		64EDCFFB964EA29427A45D19 /* SettingsDefaultsRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDefaultsRegistryTests.swift; sourceTree = "<group>"; };
 		68BBA8432D7C01F356F8FBF4 /* MediaIntakeRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaIntakeRecoveryTests.swift; sourceTree = "<group>"; };
+		68F9410BD7BB52036BB674B7 /* RailOverflowModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RailOverflowModelTests.swift; sourceTree = "<group>"; };
 		6CE41086BD2A9BF5BC8A1C77 /* IdleAutohideController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdleAutohideController.swift; sourceTree = "<group>"; };
 		6FB90AA6096E6E454A411FD9 /* DWBTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DWBTheme.swift; sourceTree = "<group>"; };
 		72143C118798E2C43492AF6F /* QueuePanelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanelModels.swift; sourceTree = "<group>"; };
@@ -312,6 +316,7 @@
 				38DE8F074B24714888F54DF5 /* QueuePanelModelsTests.swift */,
 				0B29E1B48DF7F87834388BA1 /* QueuePanelWidthPolicyTests.swift */,
 				3492867ACBF2037E57CC9C74 /* QueuePlayNextTests.swift */,
+				68F9410BD7BB52036BB674B7 /* RailOverflowModelTests.swift */,
 				FA624A1FA09E878A5FF7A543 /* RenameSheetModelsTests.swift */,
 				64EDCFFB964EA29427A45D19 /* SettingsDefaultsRegistryTests.swift */,
 				796C19ADAE6DA78B0DD171D5 /* ShortcutCommandsTests.swift */,
@@ -360,6 +365,7 @@
 				D5F60C5BF23982C0B8B9A738 /* QueuePanelViews.swift */,
 				E1EEBF88D5598585B9B073D2 /* QueueRowAccessories.swift */,
 				9E74D7834A29B36B7F6EDB5E /* RailButton.swift */,
+				4EC07FF26C20CCCE999EFC70 /* RailDropdownMenu.swift */,
 				1E3D31F879B9AE2814A38AEA /* RenameSheetModels.swift */,
 				1C507F409C3E0757B15211E9 /* RenameSheets.swift */,
 				8E5582026B4F107CCD6A68F7 /* ScaleMode.swift */,
@@ -517,6 +523,7 @@
 				2E06C337558226DBBA891778 /* QueuePanelWidthPolicyTests.swift in Sources */,
 				2703096811254B4A3B4742AB /* QueuePlayNextTests.swift in Sources */,
 				457B52EF32E46CB7121C798C /* QueueRowAccessories.swift in Sources */,
+				F61F179892843FD12A94C10D /* RailOverflowModelTests.swift in Sources */,
 				57138FB5E438B34018988F1C /* RenameSheetModels.swift in Sources */,
 				BC466AA9B1C8E9AC511F5368 /* RenameSheetModelsTests.swift in Sources */,
 				A94A9547328C0CA4943E3BFE /* ScaleMode.swift in Sources */,
@@ -575,6 +582,7 @@
 				46C7EDD27058B448AFBE0661 /* QueuePanelViews.swift in Sources */,
 				A375E84C9886B1688D801336 /* QueueRowAccessories.swift in Sources */,
 				97170BCDC88FDAE5F8AAAF4A /* RailButton.swift in Sources */,
+				3DB9459DF265FBBCCDA1C45D /* RailDropdownMenu.swift in Sources */,
 				E43BCF271D747BB579140BFB /* RenameSheetModels.swift in Sources */,
 				21CF07474405F7F160055D36 /* RenameSheets.swift in Sources */,
 				F4C4D74B374E4EF62ED62049 /* ScaleMode.swift in Sources */,

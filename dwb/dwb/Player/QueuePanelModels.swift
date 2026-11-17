@@ -273,6 +273,75 @@ enum RailPrefixButtons {
     }
 }
 
+/// One snapshot drives rail compression, utility selection, and the rendered overflow.
+/// Width is the media rail's bounds, including the space left by Queue Page.
+struct RailOverflowModel: Equatable {
+    enum Action: Equatable { case customPrefix, customPrefixSecondary, shuffle, replay, bookmark, settings }
+    enum Utility: Equatable { case hidden, settings, more }
+    struct Item: Equatable {
+        let action: Action
+        let title: String
+        let isOn: Bool
+        let isEnabled: Bool
+    }
+    struct Input {
+        var width: CGFloat
+        var primary = ""
+        var secondary = ""
+        var showPrefixes = true
+        var showShuffle = true
+        var showRepeat = true
+        var showBookmark = true
+        var showVolume = true
+        var canRename = false
+        var canShuffle = false
+        var shuffleOn = false
+        var repeatOn = false
+        var hasItem = false
+        var bookmarked = false
+    }
+
+    let primaryHidden: Bool
+    let secondaryHidden: Bool
+    let shuffleHidden: Bool
+    let repeatHidden: Bool
+    let bookmarkHidden: Bool
+    let volumeHidden: Bool
+    let skipHidden: Bool
+    let previousNextHidden: Bool
+    let timeHidden: Bool
+    let utility: Utility
+    /// Empty for direct Settings or suppressed utility; Settings is last otherwise.
+    let items: [Item]
+
+    init(_ input: Input) {
+        primaryHidden = !RailPrefixButtons.showsPrimary(primary: input.primary, prefixButtonsEnabled: input.showPrefixes) || input.width < 500
+        secondaryHidden = !RailPrefixButtons.showsSecondary(primary: input.primary, secondary: input.secondary, prefixButtonsEnabled: input.showPrefixes) || input.width < 540
+        shuffleHidden = !input.showShuffle || input.width < 430
+        repeatHidden = !input.showRepeat || input.width < 390
+        bookmarkHidden = !input.showBookmark || input.width < 560
+        volumeHidden = !input.showVolume || input.width < 360
+        skipHidden = input.width < 360
+        previousNextHidden = input.width < 280
+        timeHidden = input.width < 640
+        var actions: [Item] = []
+        if RailPrefixButtons.showsInMoreMenu(.primary, primary: input.primary, secondary: input.secondary,
+                                            prefixButtonsEnabled: input.showPrefixes, buttonIsHidden: primaryHidden) {
+            actions.append(Item(action: .customPrefix, title: RailPrefixButtons.label(forPrefix: input.primary), isOn: false, isEnabled: input.canRename))
+        }
+        if RailPrefixButtons.showsInMoreMenu(.secondary, primary: input.primary, secondary: input.secondary,
+                                            prefixButtonsEnabled: input.showPrefixes, buttonIsHidden: secondaryHidden) {
+            actions.append(Item(action: .customPrefixSecondary, title: RailPrefixButtons.label(forPrefix: input.secondary), isOn: false, isEnabled: input.canRename))
+        }
+        // Unlike prefixes, these actions remain eligible when their preference is off.
+        if shuffleHidden { actions.append(Item(action: .shuffle, title: "Shuffle", isOn: input.shuffleOn, isEnabled: input.canShuffle)) }
+        if repeatHidden { actions.append(Item(action: .replay, title: "Repeat one", isOn: input.repeatOn, isEnabled: true)) }
+        if bookmarkHidden { actions.append(Item(action: .bookmark, title: "Bookmark", isOn: input.bookmarked, isEnabled: input.hasItem)) }
+        utility = input.width < 330 ? .hidden : actions.isEmpty ? .settings : .more
+        items = utility == .more ? actions + [Item(action: .settings, title: "Settings", isOn: false, isEnabled: true)] : []
+    }
+}
+
 /// Routing for the prefix and rename shortcuts. Which key runs each command comes from the
 /// command table (`ShortcutCommands.swift`); this maps the command to the action.
 enum PrefixKeyRouting {

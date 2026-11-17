@@ -51,7 +51,9 @@ final class BottomRailView: NSView {
     private var accessibilityVisible = true
     private var railTrackingArea: NSTrackingArea?
     private var isPointerInside = false
-    private var isMoreMenuOpen = false
+    private var overflowMenu: RailDropdownMenu?
+    private var openOverflowModel: RailOverflowModel?
+    private var isMoreMenuOpen: Bool { overflowMenu != nil }
 
     var interactionStateDidChange: (() -> Void)?
 
@@ -103,6 +105,11 @@ final class BottomRailView: NSView {
         PlayerAccessibilityEnvironment.stopObserving(self)
     }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow !== window { dismissOverflowMenu() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let railTrackingArea {
@@ -127,6 +134,7 @@ final class BottomRailView: NSView {
     }
 
     @objc private func accessibilityOptionsChanged() {
+        dismissOverflowMenu()
         applyRailChrome()
         applyTimeLabelColor()
         scrubber.needsDisplay = true
@@ -180,16 +188,8 @@ final class BottomRailView: NSView {
 
     func applyVisibilitySettings() {
         updatePrefixButtonLabels()
-        let primary = SettingsWindowController.customPrefixValue()
-        let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        let showPrefixButtons = SettingsWindowController.isBottomRailShowXEnabled()
-        dPrefixButton.isHidden         = !RailPrefixButtons.showsPrimary(primary: primary, prefixButtonsEnabled: showPrefixButtons)
-        secondaryPrefixButton.isHidden = !RailPrefixButtons.showsSecondary(primary: primary, secondary: secondary, prefixButtonsEnabled: showPrefixButtons)
-        shuffleButton.isHidden         = !SettingsWindowController.isBottomRailShowShuffleEnabled()
-        repeatButton.isHidden          = !SettingsWindowController.isBottomRailShowReplayEnabled()
-        volumeButton.isHidden          = !SettingsWindowController.isBottomRailShowVolumeEnabled()
-        bookmarkButton.isHidden        = !SettingsWindowController.isBottomRailShowBookmarkEnabled()
-        // NSMenu dismisses automatically on visibility or settings changes via system dismiss.
+        dismissOverflowMenu()
+        applyResponsiveVisibility(width: bounds.width)
         applySkipDurationSettings()
         invalidateCachedDisplayState()
         syncAccessibilityExposure()
@@ -197,6 +197,7 @@ final class BottomRailView: NSView {
     }
 
     func setAccessibilityVisible(_ visible: Bool) {
+        if !visible { dismissOverflowMenu() }
         accessibilityVisible = visible
         syncAccessibilityExposure()
         window?.recalculateKeyViewLoop()
@@ -240,6 +241,7 @@ final class BottomRailView: NSView {
     }
 
     func update() {
+        if let openOverflowModel, openOverflowModel != currentOverflowModel() { dismissOverflowMenu() }
         if isImageMode {
             updateForImageMode()
             return
@@ -335,6 +337,7 @@ final class BottomRailView: NSView {
 
     override func layout() {
         super.layout()
+        dismissOverflowMenu()
         let w = bounds.width
         let railH = DWBMetrics.railHeight
         let sidePad = RailMetrics.horizontalPadding
@@ -370,7 +373,7 @@ final class BottomRailView: NSView {
 
         // Pre-calculate right cluster left boundary so center group can be
         // clamped against it before either cluster is placed.
-        let rightClusterOrder: [RailButton] = [fullscreenButton, moreButton, volumeButton, repeatButton, shuffleButton]
+        let rightClusterOrder: [RailButton] = [fullscreenButton, moreButton, settingsButton, volumeButton, repeatButton, shuffleButton]
         let rightClusterCount = CGFloat(rightClusterOrder.filter { !$0.isHidden }.count)
         let rightClusterLeft: CGFloat = rightClusterCount == 0
             ? w - sidePad
@@ -392,9 +395,9 @@ final class BottomRailView: NSView {
             centerX += size + gap
         }
 
-        // Right cluster: Fullscreen, More, Volume, Replay, Shuffle (laid out right-to-left)
+        // Right cluster: Fullscreen, Settings/More, Volume, Replay, Shuffle (right-to-left)
         var rightX = w - sidePad - buttonSize
-        for button in [fullscreenButton, moreButton, volumeButton, repeatButton, shuffleButton] where !button.isHidden {
+        for button in [fullscreenButton, moreButton, settingsButton, volumeButton, repeatButton, shuffleButton] where !button.isHidden {
             place(button, x: rightX, y: rowY, size: buttonSize)
             rightX -= buttonSize + gap
         }
@@ -416,31 +419,47 @@ final class BottomRailView: NSView {
         syncAccessibilityExposure()
     }
 
+    private func currentOverflowModel(width: CGFloat? = nil) -> RailOverflowModel {
+        var input = RailOverflowModel.Input(width: width ?? bounds.width)
+        input.primary = SettingsWindowController.customPrefixValue()
+        input.secondary = SettingsWindowController.customPrefixSecondaryValue()
+        input.showPrefixes = SettingsWindowController.isBottomRailShowXEnabled()
+        input.showShuffle = SettingsWindowController.isBottomRailShowShuffleEnabled()
+        input.showRepeat = SettingsWindowController.isBottomRailShowReplayEnabled()
+        input.showBookmark = SettingsWindowController.isBottomRailShowBookmarkEnabled()
+        input.showVolume = SettingsWindowController.isBottomRailShowVolumeEnabled()
+        input.canRename = controller?.canRenameCurrentMedia == true
+        input.canShuffle = (controller?.playbackSet.count ?? 0) > 1
+        input.shuffleOn = (controller?.isShuffleOn ?? false) || (controller?.isEndlessShuffleOn ?? false)
+        input.repeatOn = controller?.isRepeatOne ?? false
+        input.hasItem = controller?.currentMediaURL != nil
+        input.bookmarked = controller?.isCurrentItemBookmarked ?? false
+        return RailOverflowModel(input)
+    }
+
     private func applyResponsiveVisibility(width: CGFloat) {
-        // Settings act as the authoritative "show this button" gate; width is an
-        // additional compression rule when the window is narrow.
-        let primary = SettingsWindowController.customPrefixValue()
-        let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        let showPrefixButtons = SettingsWindowController.isBottomRailShowXEnabled()
-        dPrefixButton.isHidden = !RailPrefixButtons.showsPrimary(primary: primary, prefixButtonsEnabled: showPrefixButtons)
-            || width < 500
-        secondaryPrefixButton.isHidden = !RailPrefixButtons.showsSecondary(primary: primary, secondary: secondary, prefixButtonsEnabled: showPrefixButtons)
-            || width < 540
-        elapsedLabel.isHidden    = width < 640
-        remainingLabel.isHidden  = true   // combined time shown in elapsedLabel; always hidden
-        shuffleButton.isHidden   = !SettingsWindowController.isBottomRailShowShuffleEnabled()  || width < 430
-        repeatButton.isHidden    = !SettingsWindowController.isBottomRailShowReplayEnabled()   || width < 390
-        volumeButton.isHidden    = !SettingsWindowController.isBottomRailShowVolumeEnabled()   || width < 360
-        bookmarkButton.isHidden  = !SettingsWindowController.isBottomRailShowBookmarkEnabled() || width < 560
-        // Preserve the centered transport hierarchy without overlap when an open
-        // Queue Page leaves the media surface extremely narrow. Keyboard commands
-        // remain available; controls return automatically as width is restored.
-        rewindButton.isHidden = width < 360
-        forwardButton.isHidden = width < 360
-        prevButton.isHidden = width < 280
-        nextButton.isHidden = width < 280
-        moreButton.isHidden = width < 330
-        settingsButton.isHidden = true // Settings remains available in the More menu.
+        let model = currentOverflowModel(width: width)
+        let focusedUtility = window?.firstResponder === moreButton || window?.firstResponder === settingsButton
+        dPrefixButton.isHidden = model.primaryHidden
+        secondaryPrefixButton.isHidden = model.secondaryHidden
+        shuffleButton.isHidden = model.shuffleHidden
+        repeatButton.isHidden = model.repeatHidden
+        bookmarkButton.isHidden = model.bookmarkHidden
+        volumeButton.isHidden = model.volumeHidden
+        rewindButton.isHidden = model.skipHidden
+        forwardButton.isHidden = model.skipHidden
+        prevButton.isHidden = model.previousNextHidden
+        nextButton.isHidden = model.previousNextHidden
+        elapsedLabel.isHidden = model.timeHidden
+        remainingLabel.isHidden = true
+        moreButton.isHidden = model.utility != .more
+        settingsButton.isHidden = model.utility != .settings
+        if focusedUtility {
+            let replacement: NSView? = model.utility == .hidden ? nil : model.utility == .more ? moreButton : settingsButton
+            window?.makeFirstResponder(replacement)
+        }
+        syncAccessibilityExposure()
+        window?.recalculateKeyViewLoop()
     }
 
     private func setupViews() {
@@ -558,6 +577,10 @@ final class BottomRailView: NSView {
             repeatButton, bookmarkButton, moreButton, settingsButton, fullscreenButton,
             elapsedLabel, scrubber
         ]
+        if let focused = window?.firstResponder as? NSView,
+           controls.contains(where: { $0 === focused }), focused.isHidden {
+            window?.makeFirstResponder(nil)
+        }
         for control in controls {
             control.setAccessibilityElement(accessibilityVisible && !control.isHidden)
         }
@@ -724,72 +747,35 @@ final class BottomRailView: NSView {
     @objc private func settingsTapped() { SettingsWindowController.shared.openSettings() }
     @objc private func fullscreenTapped() { window?.toggleFullScreen(nil) }
 
-    @objc private func moreTapped() {
-        let shuffleEnabled = (controller?.playbackSet.count ?? 0) > 1
-        let shuffleOn = (controller?.isShuffleOn ?? false) || (controller?.isEndlessShuffleOn ?? false)
-        let renameEnabled = controller?.canRenameCurrentMedia == true
-        let hasItem = controller?.currentMediaURL != nil
-        let isBookmarked = controller?.isCurrentItemBookmarked ?? false
-        let isRepeat = controller?.isRepeatOne ?? false
-
-        let primary = SettingsWindowController.customPrefixValue()
-        let secondary = SettingsWindowController.customPrefixSecondaryValue()
-        let showPrefixButtons = SettingsWindowController.isBottomRailShowXEnabled()
-        let showsPrimaryItem = RailPrefixButtons.showsInMoreMenu(.primary, primary: primary, secondary: secondary,
-                                                                 prefixButtonsEnabled: showPrefixButtons,
-                                                                 buttonIsHidden: dPrefixButton.isHidden)
-        let showsSecondaryItem = RailPrefixButtons.showsInMoreMenu(.secondary, primary: primary, secondary: secondary,
-                                                                   prefixButtonsEnabled: showPrefixButtons,
-                                                                   buttonIsHidden: secondaryPrefixButton.isHidden)
-
-        // Use NSMenu so overflow actions are natively accessible to VoiceOver and
-        // keyboard-only users. NSMenuItem exposes role, label, state, and activation
-        // through AppKit's built-in accessibility and keyboard navigation automatically.
-        // Prefix items show only when "Prefix buttons" is on and the rail button is hidden
-        // for lack of width; with the setting off the menu has none. The other actions show
-        // when their dedicated rail button is hidden. Visible rail buttons are not duplicated.
-        let menu = NSMenu(title: "More Actions")
-        menu.autoenablesItems = false
-
-        func addItem(title: String, action: MoreMenuAction, isOn: Bool, isEnabled: Bool) {
-            let item = NSMenuItem(title: title, action: #selector(handleMoreMenuAction(_:)), keyEquivalent: "")
-            item.target = self
-            item.state = isOn ? .on : .off
-            item.isEnabled = isEnabled
-            item.representedObject = action
-            menu.addItem(item)
-        }
-
-        if showsPrimaryItem {
-            addItem(title: RailPrefixButtons.label(forPrefix: primary), action: .customPrefix, isOn: false, isEnabled: renameEnabled)
-        }
-        if showsSecondaryItem {
-            addItem(title: RailPrefixButtons.label(forPrefix: secondary), action: .customPrefixSecondary, isOn: false, isEnabled: renameEnabled)
-        }
-        if shuffleButton.isHidden {
-            addItem(title: "Shuffle",   action: .shuffle,   isOn: shuffleOn,    isEnabled: shuffleEnabled)
-        }
-        if repeatButton.isHidden {
-            addItem(title: "Repeat one", action: .replay, isOn: isRepeat, isEnabled: true)
-        }
-        if bookmarkButton.isHidden {
-            addItem(title: "Bookmark",  action: .bookmark,  isOn: isBookmarked, isEnabled: hasItem)
-        }
-        // Settings is always last so it stays reachable even when every dedicated button is visible.
-        addItem(title: "Settings", action: .settings, isOn: false, isEnabled: true)
-
-        // Anchor above the more button; AppKit adjusts for screen edges automatically.
-        isMoreMenuOpen = true
-        interactionStateDidChange?()
-        menu.popUp(positioning: nil,
-                   at: NSPoint(x: moreButton.frame.minX, y: moreButton.frame.maxY),
-                   in: self)
-        isMoreMenuOpen = false
-        interactionStateDidChange?()
+    private func dismissOverflowMenu() {
+        overflowMenu?.dismiss()
     }
 
-    @objc private func handleMoreMenuAction(_ sender: NSMenuItem) {
-        guard let action = sender.representedObject as? MoreMenuAction else { return }
+    @objc private func moreTapped() {
+        if isMoreMenuOpen { dismissOverflowMenu(); return }
+        layoutSubtreeIfNeeded()
+        let model = currentOverflowModel()
+        guard model.utility == .more, !moreButton.isHidden, accessibilityVisible else { return }
+        let menu = RailDropdownMenu(items: model.items)
+        menu.didChoose = { [weak self] action in
+            guard let self, self.currentOverflowModel() == model else { return }
+            self.performOverflowAction(action)
+        }
+        menu.didClose = { [weak self] in
+            guard let self else { return }
+            self.overflowMenu = nil
+            self.openOverflowModel = nil
+            self.moreButton.isToggled = false
+            self.interactionStateDidChange?()
+        }
+        overflowMenu = menu
+        openOverflowModel = model
+        moreButton.isToggled = true
+        interactionStateDidChange?()
+        menu.show(above: moreButton)
+    }
+
+    private func performOverflowAction(_ action: RailOverflowModel.Action) {
         switch action {
         case .customPrefix:          controller?.performPrefixAction(.primaryPrefix, source: "bottomRail")
         case .customPrefixSecondary: controller?.performPrefixAction(.secondaryPrefix, source: "bottomRail-more")
@@ -822,9 +808,6 @@ final class BottomRailView: NSView {
 
 // MARK: - More menu
 
-fileprivate enum MoreMenuAction {
-    case customPrefix, customPrefixSecondary, shuffle, replay, bookmark, settings
-}
 
 // MARK: - Rail scrubber cell
 
