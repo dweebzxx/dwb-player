@@ -36,6 +36,11 @@ struct PlaybackSpeedOption: Equatable {
 
     var tag: Int { Self.tag(for: rate) }
 
+    /// The Settings popup title (`1.00× (Normal)`). `title` stays the menu text.
+    var settingsPopupTitle: String {
+        SettingsPlaybackSpeedTitle.title(rate: rate, isNormal: rate == Self.normalRate)
+    }
+
     static let normalRate: Float = 1.0
 
     static let all: [PlaybackSpeedOption] = [
@@ -4305,7 +4310,7 @@ class PlayerWindowController: NSWindowController {
             ? (pausedNearEOF ? "paused-near-eof" : (strongEOF ? "strong-eof" : "watchdog-near-eof"))
             : (recentSeek ? "seek-guarded" : "no-eof")
 
-        // Per-tick trace: gated behind Settings > Developer > Verbose Autoplay Trace (default OFF).
+        // Per-tick trace: gated by Detailed autoplay logging in Settings > Advanced (default OFF).
         // Terminal-path decision logs (completionDecision, accepted .ended, etc.) are
         // preserved unconditionally below and in scheduleCompletionSequence.
         #if DEBUG

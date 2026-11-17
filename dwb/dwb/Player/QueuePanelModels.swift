@@ -273,20 +273,19 @@ enum RailPrefixButtons {
     }
 }
 
-/// Plain-key routing for the prefix and rename shortcuts.
+/// Routing for the prefix and rename shortcuts. Which key runs each command comes from the
+/// command table (`ShortcutCommands.swift`); this maps the command to the action.
 enum PrefixKeyRouting {
     enum Action: Equatable { case primaryPrefix, secondaryPrefix, rename }
 
-    /// `N`, `M` and `R` with no modifier, never while a text field is being edited.
-    static func action(forCharacters characters: String?,
-                       hasModifiers: Bool,
-                       isEditingText: Bool) -> Action? {
-        guard !hasModifiers, !isEditingText, let characters else { return nil }
-        switch characters.lowercased() {
-        case "n": return .primaryPrefix
-        case "m": return .secondaryPrefix
-        case "r": return .rename
-        default:  return nil
+    /// The action of a prefix or rename command, never while a text field is being edited.
+    static func action(for command: ShortcutCommandID?, isEditingText: Bool) -> Action? {
+        guard !isEditingText, let command else { return nil }
+        switch command {
+        case .togglePrimaryPrefix:   return .primaryPrefix
+        case .toggleSecondaryPrefix: return .secondaryPrefix
+        case .renameFile:            return .rename
+        default:                     return nil
         }
     }
 

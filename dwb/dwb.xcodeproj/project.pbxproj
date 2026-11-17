@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00C1C0FCBE678EF8947AB714 /* ShortcutCommandsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 796C19ADAE6DA78B0DD171D5 /* ShortcutCommandsTests.swift */; };
 		00EAB8DFFEB977D188E74783 /* DWBControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5FFE2E120D241F8CCD60D0 /* DWBControls.swift */; };
 		01724679752296CC0E6C5E10 /* MarkerRenameUndoPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE167A1B7621CAD42296C3AE /* MarkerRenameUndoPlan.swift */; };
 		029E408914112547A40A1130 /* VolumeBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B05577A9437B4AEFAD340CBE /* VolumeBarView.swift */; };
@@ -41,15 +42,19 @@
 		44C949CABA5D158791A6B674 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBC53C0EF8397BE64EF0453B /* AppDelegate.swift */; };
 		457B52EF32E46CB7121C798C /* QueueRowAccessories.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1EEBF88D5598585B9B073D2 /* QueueRowAccessories.swift */; };
 		459CF07237979BC40E071B2C /* SettingsDefaultsRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64EDCFFB964EA29427A45D19 /* SettingsDefaultsRegistryTests.swift */; };
+		45E4912DE27D171C4975E0F0 /* ShortcutCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28694E6104690E0BC86D1E8D /* ShortcutCommands.swift */; };
 		46C7EDD27058B448AFBE0661 /* QueuePanelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F60C5BF23982C0B8B9A738 /* QueuePanelViews.swift */; };
+		4CA6CBFF7476B5FD10D1EFB9 /* ShortcutKeyEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F11C7DBE25B5DE53CCC842 /* ShortcutKeyEvent.swift */; };
 		4CB0271657C7F56A704067ED /* MediaFileSupportCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398D11074CD871056D309939 /* MediaFileSupportCoreTests.swift */; };
 		5161DC6C91D451C91695A1C5 /* IdleAutohideController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CE41086BD2A9BF5BC8A1C77 /* IdleAutohideController.swift */; };
+		51BCFE55B141A70D5BB8EDA2 /* SettingsAdvancedAboutContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9903024106C6F907D2E7D417 /* SettingsAdvancedAboutContent.swift */; };
 		5608CDF7875EF4E41B2708FA /* AudioReassertPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DF8E130BB917DAF31D32CC /* AudioReassertPolicyTests.swift */; };
 		57138FB5E438B34018988F1C /* RenameSheetModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E3D31F879B9AE2814A38AEA /* RenameSheetModels.swift */; };
 		57CEAD3C8E4E468877FC7A6A /* QueuePanelLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA43AC1B2A5DA4F155355709 /* QueuePanelLayoutTests.swift */; };
 		5CE796EC4D95A234570211CC /* DebugLogBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A121D4E09282D5C4D3A582 /* DebugLogBuffer.swift */; };
 		5D74E77899167A6B83A6B780 /* AudioDelayBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 949821700F83246EBC5C6E68 /* AudioDelayBarView.swift */; };
 		670616017E4B2D544BE5DA8D /* PlayerOverlayViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 856679ED4E81571FA2EB8A9D /* PlayerOverlayViews.swift */; };
+		6785187E0551A2AF3F012D19 /* ShortcutCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28694E6104690E0BC86D1E8D /* ShortcutCommands.swift */; };
 		6A680B77C85E7EE4696A7099 /* QueueDisplayProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78BD398E5D6D86EE50F1E89E /* QueueDisplayProjection.swift */; };
 		6BE9762A82F4E136F3495623 /* NonLocalVolumeMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1FF6E107AAABD1B611491A0 /* NonLocalVolumeMetadata.swift */; };
 		6D5F4565185B97C09637F316 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0F865DF708082FD7F8E7693D /* Assets.xcassets */; };
@@ -75,10 +80,12 @@
 		A375E84C9886B1688D801336 /* QueueRowAccessories.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1EEBF88D5598585B9B073D2 /* QueueRowAccessories.swift */; };
 		A3BCC10A8B68050A5689C781 /* PlayerOverlayModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6415BB98DB5D68093F3D7866 /* PlayerOverlayModels.swift */; };
 		A48ADF916909AB89C17525A1 /* MediaIntakeRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5277948B8E7EE63F6A6DC67 /* MediaIntakeRecovery.swift */; };
+		A5D1BBBB4E14F0C8109B29A9 /* ShortcutEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3FE09E61AD958CBEBA81AFA /* ShortcutEditorSheet.swift */; };
 		A94A9547328C0CA4943E3BFE /* ScaleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5582026B4F107CCD6A68F7 /* ScaleMode.swift */; };
 		A9FF5975B356825A2FB97929 /* TransportControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE33930DA6F0599267766541 /* TransportControlsView.swift */; };
 		AC5DF374D0851B07733ED931 /* PlayerTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = C82A1DE36EB3EF72934E4307 /* PlayerTheme.swift */; };
 		AD152C041BFDF5929288ED08 /* GIFDurationMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37B57CA44DAFECB636DDC5DA /* GIFDurationMetadataTests.swift */; };
+		B090E899606C1E896875D35B /* ShortcutKeyEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F11C7DBE25B5DE53CCC842 /* ShortcutKeyEvent.swift */; };
 		B3B1E34DB825C82D3D99CB89 /* PlaybackStartWindowPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEE05F28FCBC48C887273C78 /* PlaybackStartWindowPolicyTests.swift */; };
 		B7FD4A31234AB08D649B4213 /* QueueDisplayProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C0AE690A098932F9FAD5849 /* QueueDisplayProjectionTests.swift */; };
 		B8BB838D94EED5233DDCA206 /* PlayerOverlayModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19D01564DF300E4A1C89A55 /* PlayerOverlayModelsTests.swift */; };
@@ -94,6 +101,7 @@
 		C9A4ECD724BF1C4C4130E9BC /* QueuePanelResizeHandleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161E63116AFB1083FF5A0B4D /* QueuePanelResizeHandleView.swift */; };
 		CA5E3AE5ABEE73751F4A1B61 /* DWBAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC68F702C6B0549F83C2F738 /* DWBAppearance.swift */; };
 		CAB921CB2BC46E00D716D3FF /* ShortcutsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4C962AD9282D16A1D680866 /* ShortcutsModelTests.swift */; };
+		CEA0C9BED80B1C52100B150A /* PlayerKeyDispatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BDDF3AEE3FA5CB244D1B07B /* PlayerKeyDispatch.swift */; };
 		D0DC0D2FCE37753088643C0E /* DebugLogSanitizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F316833BEAB0C51D4FE76855 /* DebugLogSanitizerTests.swift */; };
 		D368454ADA3372EC3F269248 /* NonLocalVolumeMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E914E8DFA93D4A2E8269DD11 /* NonLocalVolumeMetadataTests.swift */; };
 		D60827F86F6DF983AFFC13F7 /* ShortcutsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC50D1DBD3FE278803A8633C /* ShortcutsModel.swift */; };
@@ -114,6 +122,7 @@
 		F4C4D74B374E4EF62ED62049 /* ScaleMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5582026B4F107CCD6A68F7 /* ScaleMode.swift */; };
 		F756E90BA3E178D147C83B07 /* DebugLogBufferTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C876CFBAD1F720070E7D5F8C /* DebugLogBufferTests.swift */; };
 		F78A7A88E8EC11E7BDBCA148 /* DWBThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A892AB7B2BAF2DD0E4BA30D /* DWBThemeTests.swift */; };
+		FA023828C8FE9D19252DFA0B /* SettingsAdvancedAboutContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9903024106C6F907D2E7D417 /* SettingsAdvancedAboutContent.swift */; };
 		FB0CF11C34FC38FF6BD6EB93 /* VLCMedia+DecoderPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD04D983C53812BF9AC0D3B6 /* VLCMedia+DecoderPreference.swift */; };
 		FE06027C0BA4EBEDAC723D4F /* AV1DecoderPreferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D4B6EC95A3D0B0A188356B /* AV1DecoderPreferenceTests.swift */; };
 /* End PBXBuildFile section */
@@ -133,11 +142,13 @@
 		1D60217E0E82E386D51B2DC4 /* MediaFileSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFileSupport.swift; sourceTree = "<group>"; };
 		1E3D31F879B9AE2814A38AEA /* RenameSheetModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenameSheetModels.swift; sourceTree = "<group>"; };
 		25532C3528A96CA5A7CB56EF /* MediaFileSupportCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFileSupportCore.swift; sourceTree = "<group>"; };
+		28694E6104690E0BC86D1E8D /* ShortcutCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutCommands.swift; sourceTree = "<group>"; };
 		2B8F4DFDB0D7032E25AE4DE9 /* SettingsPagesModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPagesModel.swift; sourceTree = "<group>"; };
 		3492867ACBF2037E57CC9C74 /* QueuePlayNextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePlayNextTests.swift; sourceTree = "<group>"; };
 		37B57CA44DAFECB636DDC5DA /* GIFDurationMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GIFDurationMetadataTests.swift; sourceTree = "<group>"; };
 		38DE8F074B24714888F54DF5 /* QueuePanelModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanelModelsTests.swift; sourceTree = "<group>"; };
 		398D11074CD871056D309939 /* MediaFileSupportCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaFileSupportCoreTests.swift; sourceTree = "<group>"; };
+		3BDDF3AEE3FA5CB244D1B07B /* PlayerKeyDispatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerKeyDispatch.swift; sourceTree = "<group>"; };
 		46F95A3999534816AD5B65D3 /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		4AB0FBB5C743B55BE440C890 /* BookmarkStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkStoreTests.swift; sourceTree = "<group>"; };
 		4C0AE690A098932F9FAD5849 /* QueueDisplayProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueDisplayProjectionTests.swift; sourceTree = "<group>"; };
@@ -153,6 +164,7 @@
 		6FB90AA6096E6E454A411FD9 /* DWBTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DWBTheme.swift; sourceTree = "<group>"; };
 		72143C118798E2C43492AF6F /* QueuePanelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanelModels.swift; sourceTree = "<group>"; };
 		78BD398E5D6D86EE50F1E89E /* QueueDisplayProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueDisplayProjection.swift; sourceTree = "<group>"; };
+		796C19ADAE6DA78B0DD171D5 /* ShortcutCommandsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutCommandsTests.swift; sourceTree = "<group>"; };
 		79BAA436D121616AF0B07B75 /* PlayerWindowTargeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerWindowTargeting.swift; sourceTree = "<group>"; };
 		7BB705E0B52CFC6BC8E30892 /* DWBConfirmSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DWBConfirmSheet.swift; sourceTree = "<group>"; };
 		7C6414EA6B3AA256C6FD5F01 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
@@ -162,6 +174,7 @@
 		8E5582026B4F107CCD6A68F7 /* ScaleMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScaleMode.swift; sourceTree = "<group>"; };
 		9240A95CDAEF9983B028B0DB /* PrefixTransitionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrefixTransitionTests.swift; sourceTree = "<group>"; };
 		949821700F83246EBC5C6E68 /* AudioDelayBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDelayBarView.swift; sourceTree = "<group>"; };
+		9903024106C6F907D2E7D417 /* SettingsAdvancedAboutContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsAdvancedAboutContent.swift; sourceTree = "<group>"; };
 		9A34439830A2537AD2568A80 /* PlaybackStartStallPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStartStallPolicyTests.swift; sourceTree = "<group>"; };
 		9E74D7834A29B36B7F6EDB5E /* RailButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RailButton.swift; sourceTree = "<group>"; };
 		9F922CAB7033CCD9A924F180 /* QueuePanelLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanelLayout.swift; sourceTree = "<group>"; };
@@ -184,6 +197,7 @@
 		D5F60C5BF23982C0B8B9A738 /* QueuePanelViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanelViews.swift; sourceTree = "<group>"; };
 		D71934D5D8C533299E0BA02D /* MarkerRenameUndoPlanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkerRenameUndoPlanTests.swift; sourceTree = "<group>"; };
 		D7954F94831549F7CDC2EE1F /* QueuePageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePageView.swift; sourceTree = "<group>"; };
+		D8F11C7DBE25B5DE53CCC842 /* ShortcutKeyEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutKeyEvent.swift; sourceTree = "<group>"; };
 		DA43AC1B2A5DA4F155355709 /* QueuePanelLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueuePanelLayoutTests.swift; sourceTree = "<group>"; };
 		DF33CC52AD24B1981D4E44AB /* PlayerWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerWindowController.swift; sourceTree = "<group>"; };
 		E1EEBF88D5598585B9B073D2 /* QueueRowAccessories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueRowAccessories.swift; sourceTree = "<group>"; };
@@ -192,6 +206,7 @@
 		EDECE42D310D0645C598B23F /* PlaybackCompletionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackCompletionPolicyTests.swift; sourceTree = "<group>"; };
 		F316833BEAB0C51D4FE76855 /* DebugLogSanitizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogSanitizerTests.swift; sourceTree = "<group>"; };
 		F3C0AA31D17CA30E62687E44 /* BookmarkStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkStore.swift; sourceTree = "<group>"; };
+		F3FE09E61AD958CBEBA81AFA /* ShortcutEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutEditorSheet.swift; sourceTree = "<group>"; };
 		F5277948B8E7EE63F6A6DC67 /* MediaIntakeRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaIntakeRecovery.swift; sourceTree = "<group>"; };
 		F6F94C3AB5999DD5C50D296D /* dwbTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = dwbTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F75902B60351E267E8DE8316 /* PlayerCommandValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCommandValidationTests.swift; sourceTree = "<group>"; };
@@ -240,9 +255,13 @@
 				7C6414EA6B3AA256C6FD5F01 /* main.swift */,
 				C82A1DE36EB3EF72934E4307 /* PlayerTheme.swift */,
 				79BAA436D121616AF0B07B75 /* PlayerWindowTargeting.swift */,
+				9903024106C6F907D2E7D417 /* SettingsAdvancedAboutContent.swift */,
 				1D085365DFC73A63635B92A8 /* SettingsDefaultsRegistry.swift */,
 				2B8F4DFDB0D7032E25AE4DE9 /* SettingsPagesModel.swift */,
 				46F95A3999534816AD5B65D3 /* SettingsWindowController.swift */,
+				28694E6104690E0BC86D1E8D /* ShortcutCommands.swift */,
+				F3FE09E61AD958CBEBA81AFA /* ShortcutEditorSheet.swift */,
+				D8F11C7DBE25B5DE53CCC842 /* ShortcutKeyEvent.swift */,
 				BC50D1DBD3FE278803A8633C /* ShortcutsModel.swift */,
 				5554913B50063A6B5259AAAF /* ShortcutsPageView.swift */,
 			);
@@ -295,6 +314,7 @@
 				3492867ACBF2037E57CC9C74 /* QueuePlayNextTests.swift */,
 				FA624A1FA09E878A5FF7A543 /* RenameSheetModelsTests.swift */,
 				64EDCFFB964EA29427A45D19 /* SettingsDefaultsRegistryTests.swift */,
+				796C19ADAE6DA78B0DD171D5 /* ShortcutCommandsTests.swift */,
 				C4C962AD9282D16A1D680866 /* ShortcutsModelTests.swift */,
 			);
 			path = dwbTests;
@@ -328,6 +348,7 @@
 				CAED44E54402F88472F4EC75 /* PlaybackStartStallPolicy.swift */,
 				5020E5D67BCF8CE7C3C35657 /* PlaybackStartWindowPolicy.swift */,
 				637225658CD878F1C6B0949D /* PlayerCommandValidation.swift */,
+				3BDDF3AEE3FA5CB244D1B07B /* PlayerKeyDispatch.swift */,
 				6415BB98DB5D68093F3D7866 /* PlayerOverlayModels.swift */,
 				856679ED4E81571FA2EB8A9D /* PlayerOverlayViews.swift */,
 				DF33CC52AD24B1981D4E44AB /* PlayerWindowController.swift */,
@@ -499,9 +520,13 @@
 				57138FB5E438B34018988F1C /* RenameSheetModels.swift in Sources */,
 				BC466AA9B1C8E9AC511F5368 /* RenameSheetModelsTests.swift in Sources */,
 				A94A9547328C0CA4943E3BFE /* ScaleMode.swift in Sources */,
+				51BCFE55B141A70D5BB8EDA2 /* SettingsAdvancedAboutContent.swift in Sources */,
 				E755D1737C20FF3617F35C31 /* SettingsDefaultsRegistry.swift in Sources */,
 				459CF07237979BC40E071B2C /* SettingsDefaultsRegistryTests.swift in Sources */,
 				071F1B3403500A50647E5137 /* SettingsPagesModel.swift in Sources */,
+				6785187E0551A2AF3F012D19 /* ShortcutCommands.swift in Sources */,
+				00C1C0FCBE678EF8947AB714 /* ShortcutCommandsTests.swift in Sources */,
+				B090E899606C1E896875D35B /* ShortcutKeyEvent.swift in Sources */,
 				D60827F86F6DF983AFFC13F7 /* ShortcutsModel.swift in Sources */,
 				CAB921CB2BC46E00D716D3FF /* ShortcutsModelTests.swift in Sources */,
 			);
@@ -536,6 +561,7 @@
 				9EB1D8AAAC6CBB774E5A77CE /* PlaybackStartStallPolicy.swift in Sources */,
 				2FA357EF96A1D075D0859749 /* PlaybackStartWindowPolicy.swift in Sources */,
 				D68E8E41B219D789C86505C0 /* PlayerCommandValidation.swift in Sources */,
+				CEA0C9BED80B1C52100B150A /* PlayerKeyDispatch.swift in Sources */,
 				A3BCC10A8B68050A5689C781 /* PlayerOverlayModels.swift in Sources */,
 				670616017E4B2D544BE5DA8D /* PlayerOverlayViews.swift in Sources */,
 				C6C72B59F597A38054B34F20 /* PlayerTheme.swift in Sources */,
@@ -552,9 +578,13 @@
 				E43BCF271D747BB579140BFB /* RenameSheetModels.swift in Sources */,
 				21CF07474405F7F160055D36 /* RenameSheets.swift in Sources */,
 				F4C4D74B374E4EF62ED62049 /* ScaleMode.swift in Sources */,
+				FA023828C8FE9D19252DFA0B /* SettingsAdvancedAboutContent.swift in Sources */,
 				190DABF8A64E0EA22B100D41 /* SettingsDefaultsRegistry.swift in Sources */,
 				3950E29B5496130E87371E2F /* SettingsPagesModel.swift in Sources */,
 				E3FAA7D43D9D251692CA28CB /* SettingsWindowController.swift in Sources */,
+				45E4912DE27D171C4975E0F0 /* ShortcutCommands.swift in Sources */,
+				A5D1BBBB4E14F0C8109B29A9 /* ShortcutEditorSheet.swift in Sources */,
+				4CA6CBFF7476B5FD10D1EFB9 /* ShortcutKeyEvent.swift in Sources */,
 				C67258288BB762CC9115B804 /* ShortcutsModel.swift in Sources */,
 				97F73968DEEBD59D38F9C05E /* ShortcutsPageView.swift in Sources */,
 				A9FF5975B356825A2FB97929 /* TransportControlsView.swift in Sources */,
@@ -744,11 +774,11 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.5.1;
+				CURRENT_PROJECT_VERSION = 130;
 				INFOPLIST_FILE = dwb/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.5.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dwb.dwb;
 				PRODUCT_NAME = "dwb player";
 				SDKROOT = macosx;
@@ -761,11 +791,11 @@
 				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1.5.1;
+				CURRENT_PROJECT_VERSION = 130;
 				INFOPLIST_FILE = dwb/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.5.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dwb.dwb;
 				PRODUCT_NAME = "dwb player";
 				SDKROOT = macosx;

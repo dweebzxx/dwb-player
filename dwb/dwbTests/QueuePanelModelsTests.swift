@@ -306,25 +306,30 @@ final class QueuePanelModelsTests: XCTestCase {
 
     // MARK: Prefix keys
 
-    func testEveryPrefixKeyReturnsNilWithModifiersOrWhileEditingText() {
-        for key in ["n", "m", "r"] {
-            XCTAssertNotNil(PrefixKeyRouting.action(forCharacters: key, hasModifiers: false, isEditingText: false))
-            XCTAssertNil(PrefixKeyRouting.action(forCharacters: key, hasModifiers: true, isEditingText: false))
-            XCTAssertNil(PrefixKeyRouting.action(forCharacters: key, hasModifiers: false, isEditingText: true))
+    func testEveryPrefixCommandReturnsNilWhileEditingText() {
+        for command in [ShortcutCommandID.togglePrimaryPrefix, .toggleSecondaryPrefix, .renameFile] {
+            XCTAssertNotNil(PrefixKeyRouting.action(for: command, isEditingText: false))
+            XCTAssertNil(PrefixKeyRouting.action(for: command, isEditingText: true))
         }
     }
 
-    func testPlainNMAndRMapToTheirActions() {
-        XCTAssertEqual(PrefixKeyRouting.action(forCharacters: "n", hasModifiers: false, isEditingText: false), .primaryPrefix)
-        XCTAssertEqual(PrefixKeyRouting.action(forCharacters: "m", hasModifiers: false, isEditingText: false), .secondaryPrefix)
-        XCTAssertEqual(PrefixKeyRouting.action(forCharacters: "r", hasModifiers: false, isEditingText: false), .rename)
-        XCTAssertNil(PrefixKeyRouting.action(forCharacters: "b", hasModifiers: false, isEditingText: false))
-        XCTAssertNil(PrefixKeyRouting.action(forCharacters: nil, hasModifiers: false, isEditingText: false))
+    func testPrefixAndRenameCommandsMapToTheirActions() {
+        XCTAssertEqual(PrefixKeyRouting.action(for: .togglePrimaryPrefix, isEditingText: false), .primaryPrefix)
+        XCTAssertEqual(PrefixKeyRouting.action(for: .toggleSecondaryPrefix, isEditingText: false), .secondaryPrefix)
+        XCTAssertEqual(PrefixKeyRouting.action(for: .renameFile, isEditingText: false), .rename)
+        XCTAssertNil(PrefixKeyRouting.action(for: .toggleBookmark, isEditingText: false))
+        XCTAssertNil(PrefixKeyRouting.action(for: nil, isEditingText: false))
     }
 
-    func testPrefixKeysNeverFireWithModifiersOrWhileEditingText() {
-        XCTAssertNil(PrefixKeyRouting.action(forCharacters: "n", hasModifiers: true, isEditingText: false))
-        XCTAssertNil(PrefixKeyRouting.action(forCharacters: "r", hasModifiers: false, isEditingText: true))
+    func testThePlainDefaultKeysReachThePrefixCommandsAndModifiedKeysDoNot() {
+        let bindings = ShortcutBindings()
+        for surface in [ShortcutSurface.video, .image, .queueTable] {
+            XCTAssertEqual(bindings.pageCommand(for: .character("n"), surface: surface), .togglePrimaryPrefix)
+            XCTAssertEqual(bindings.pageCommand(for: .character("m"), surface: surface), .toggleSecondaryPrefix)
+            XCTAssertEqual(bindings.pageCommand(for: .character("r"), surface: surface), .renameFile)
+            XCTAssertNil(bindings.pageCommand(for: .character("n", .command), surface: surface))
+            XCTAssertNil(bindings.pageCommand(for: .character("r", .shift), surface: surface))
+        }
     }
 
     func testRenameKeyUsesTheSelectedRowOnlyWhenExactlyOneIsSelected() {

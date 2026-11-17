@@ -61,7 +61,7 @@ final class AboutPageView: NSView {
         nameLabel.attributedStringValue = name
         nameLabel.setAccessibilityLabel("dwb player")
 
-        let versionLabel = makeLabel("Version \(version) \u{2022} Build \(build)", size: 13,
+        let versionLabel = makeLabel(SettingsAdvancedAboutContent.About.versionLine(version: version, build: build), size: 13,
                                      color: { DWBAppearance.shared.textSecondary })
         versionLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
 
@@ -76,11 +76,19 @@ final class AboutPageView: NSView {
         rule.translatesAutoresizingMaskIntoConstraints = false
 
         let factRows: [[NSView]] = facts.map { key, value in
-            let keyLabel = makeLabel(key, size: 12.5, color: { DWBAppearance.shared.textTertiary })
+            let keyLabel = NSTextField(wrappingLabelWithString: key)
+            keyLabel.font = .systemFont(ofSize: 12.5)
+            keyLabel.textColor = DWBAppearance.shared.textTertiary
+            keyLabel.preferredMaxLayoutWidth = Self.factKeyColumn
+            keyLabel.maximumNumberOfLines = 2
+            keyLabel.translatesAutoresizingMaskIntoConstraints = false
+            refreshers.append { keyLabel.textColor = DWBAppearance.shared.textTertiary }
+            keyLabel.setAccessibilityLabel("\(key): \(value)")
             let valueLabel = makeLabel(value, size: 12.5, color: { DWBColor.textPrimary })
             valueLabel.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .regular)
             valueLabel.lineBreakMode = .byTruncatingMiddle
             valueLabel.toolTip = value
+            valueLabel.setAccessibilityElement(false)
             return [keyLabel, valueLabel]
         }
         let factsGrid = NSGridView(views: factRows)

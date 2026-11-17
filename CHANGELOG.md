@@ -2,6 +2,33 @@
 
 All notable changes to dwb player are recorded here.
 
+## 1.5.2 — 2026-11-17
+
+Covers the changes made since 1.5.1: a redesigned Settings window and customizable keyboard shortcuts.
+
+### Added
+
+- **Customizable keyboard shortcuts.** Settings > Shortcuts lists every shortcut in dwb player, with a keyboard map and search. Click a key to change or remove it, add more keys to an action, or assign an unassigned action. A key that another action already uses in the same context, or that cannot be delivered reliably, is refused with a message. Restore Defaults… on the page resets only the shortcuts. Changes apply to dwb player only, update the menus and tooltips at once, and are kept between launches.
+- **Edit menu.** The Edit menu now has Undo, Redo, Cut, Copy, Paste, and Select All. Their keys (Command-Z, Shift-Command-Z, Command-X, Command-C, Command-V, Command-A) are reserved for text editing and cannot be assigned to other actions.
+- **Reference rows.** The Shortcuts page also lists fixed keys that cannot be changed: Delete and Forward Delete for removing selected queue rows, the arrow keys and Home on the queue panel divider, and the Settings sidebar arrows.
+
+### Changed
+
+- **Settings pages.** Playback, Appearance & Controls (renamed from Controls), Queue & Files, Advanced, and About were rebuilt with grouped sections and supporting text under each setting. Accepted media (Videos, Images, GIFs) moved to Queue & Files, and the media-recovery action "Open Settings" now opens that page. Stored values, defaults, and ranges did not change.
+- **Playback page.** Playback speed, Skip duration, and "Show filename when playback starts" are under Video. Image duration and GIF loops are typed numbers with steppers instead of menus. Playback speed shows `1.00× (Normal)`.
+- **Hide title bar.** Turning on Hide title bar disables Automatically hide title bar and keeps its saved value. The Window menu's Auto-hide Titlebar item follows the same rule.
+- **Filename prefixes.** The Queue & Files page shows the live keys for the primary and secondary prefix, so it follows any change made on the Shortcuts page.
+- **Play or pause.** Space is the only default key. Command-Space is no longer assigned; a key you set yourself is kept.
+- **Exact modifiers.** A shortcut now runs only with the modifiers it is assigned. For example, Shift-← no longer seeks.
+- **Tooltips.** The rail tooltips for Previous and Next file now show their real keys (`,` and `.`).
+- **Repeat one.** The Settings checkbox, the rail button, and the More menu all call this action Repeat one (it was "Replay" and "Repeat current file").
+- **Advanced page.** Show debug console, Detailed autoplay logging, Clear All Bookmarks…, and Restore Default Settings… in one page. The confirmations name dwb player. Restore Default Settings also clears shortcut changes, and the default keys apply right away.
+- **About page.** Shows the version, license, minimum macOS version, the playback framework, and the VLC backend version on separate rows. The build value shows `--`.
+
+### Fixed
+
+- The Debug Console filter text no longer overlaps its search icon.
+
 ## 1.5.1 — 2026-11-15
 
 Covers the changes made since the previous release notes (2026-07-23).

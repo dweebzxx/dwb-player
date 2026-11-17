@@ -110,4 +110,16 @@ final class PlayerWindowTargetingTests: XCTestCase {
         XCTAssertTrue(shown.hasSuffix("-the-end.mkv"))
         XCTAssertTrue(shown.contains("\u{2026}"))
     }
+
+    // MARK: - Playback speed helper text
+
+    func testSpeedHelperTextSaysVideoOnlyThenNamesTheWindow() {
+        XCTAssertEqual(PlayerWindowTargeting.speedHelperText(targetTitle: "Holiday.mov"),
+                       "Affects video only. Applies to \u{201C}Holiday.mov\u{201D}.")
+    }
+
+    func testSpeedHelperTextWithNoWindowSaysSo() {
+        XCTAssertEqual(PlayerWindowTargeting.speedHelperText(targetTitle: nil),
+                       "Affects video only. No player window is open.")
+    }
 }

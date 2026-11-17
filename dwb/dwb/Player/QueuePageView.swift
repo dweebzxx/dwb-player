@@ -436,7 +436,7 @@ final class QueuePageView: NSView, NSSearchFieldDelegate {
         secondaryCell.action = #selector(customPrefixSecondaryTapped)
 
         undoCell.symbolName = "arrow.uturn.backward"
-        undoCell.toolTip = "Undo the last prefix change (⌘Z)"
+        undoCell.toolTip = ShortcutHint.title("Undo the last prefix change", for: .undoPrefixChange)
         undoCell.setAccessibilityLabel("Undo last prefix change")
         undoCell.setAccessibilityHelp("Restores the filenames changed by the most recent prefix change in this window")
         undoCell.setAccessibilityIdentifier("queue.footer.undoMarkerRename")
@@ -1438,7 +1438,7 @@ final class QueuePageTableView: NSTableView {
     /// Called when Delete or Backspace is pressed with one or more selected rows.
     /// Indices are sorted descending so the caller can remove them safely.
     var deleteRowsHandler: (([Int]) -> Void)?
-    /// Called for an unmodified `N`, `M` or `R` while the table is focused.
+    /// Called for the primary prefix, secondary prefix or rename key (default `N`, `M`, `R`) while the table is focused.
     var prefixKeyHandler: ((PrefixKeyRouting.Action) -> Void)?
     /// Called when a drag over the table exits or ends, so the drop line can go.
     var onDragEnded: (() -> Void)?
@@ -1482,9 +1482,11 @@ final class QueuePageTableView: NSTableView {
             deleteRowsHandler?(rows.sorted(by: >))
             return
         }
-        let hasModifiers = !event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
-        if let action = PrefixKeyRouting.action(forCharacters: event.charactersIgnoringModifiers,
-                                                hasModifiers: hasModifiers,
+        // The prefix and rename keys come from the command table, so a key the user changed
+        // works here the same as in the video view.
+        if let key = ShortcutKey(event: event),
+           let command = ShortcutRegistry.shared.bindings.pageCommand(for: key, surface: .queueTable),
+           let action = PrefixKeyRouting.action(for: command,
                                                 isEditingText: window?.firstResponder is NSText) {
             if !event.isARepeat { prefixKeyHandler?(action) }
             return

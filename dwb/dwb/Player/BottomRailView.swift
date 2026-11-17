@@ -85,6 +85,12 @@ final class BottomRailView: NSView {
             name: .customPrefixValueChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShortcutsChanged),
+            name: ShortcutRegistry.didChangeNotification,
+            object: nil
+        )
         PlayerAccessibilityEnvironment.observeChanges(self, selector: #selector(accessibilityOptionsChanged))
     }
 
@@ -141,6 +147,25 @@ final class BottomRailView: NSView {
 
     @objc private func handleBottomRailButtonVisibilityChanged() {
         applyVisibilitySettings()
+    }
+
+    /// A shortcut changed: the tooltips that name a key follow it.
+    @objc private func handleShortcutsChanged() {
+        let hints: [(RailButton, String, ShortcutCommandID)] = [
+            (dPrefixButton, "Rename: apply primary custom prefix", .togglePrimaryPrefix),
+            (secondaryPrefixButton, "Rename: apply secondary custom prefix", .toggleSecondaryPrefix),
+            (prevButton, "Previous file", .previousItem),
+            (nextButton, "Next file", .nextItem),
+            (settingsButton, "Settings", .openSettings)
+        ]
+        for (button, title, id) in hints {
+            let help = ShortcutHint.title(title, for: id)
+            button.setAccessibilityHelp(help)
+            button.toolTip = help
+        }
+        // The play and bookmark tooltips are rebuilt with their state.
+        cachedPlayPauseSymbol = nil
+        update()
     }
 
     @objc private func handleCustomPrefixValueChanged() {
@@ -234,7 +259,7 @@ final class BottomRailView: NSView {
             playPauseButton.configureSymbol(playSymbol,
                                             primary: true,
                                             accessibilityLabel: player.isPlaying ? "Pause" : "Play",
-                                            help: "Play / Pause (Space)")
+                                            help: ShortcutHint.title("Play / Pause", for: .playPause))
         }
         playPauseButton.setAccessibilityValue(player.isPlaying ? "playing" : "paused")
         scrubber.isEnabled = hasMedia
@@ -282,13 +307,13 @@ final class BottomRailView: NSView {
         repeatButton.isEnabled = hasMedia
         let repeatActive = controller?.isRepeatOne ?? false
         repeatButton.isToggled = repeatActive
-        repeatButton.setAccessibilityValue(repeatActive ? "Repeat One on" : "Repeat One off")
+        repeatButton.setAccessibilityValue(repeatActive ? "Repeat one on" : "Repeat one off")
         let repeatSymbol = repeatActive ? "repeat.1" : "repeat"
         if repeatSymbol != cachedRepeatSymbol {
             cachedRepeatSymbol = repeatSymbol
             repeatButton.configureSymbol(repeatSymbol,
-                                         accessibilityLabel: "Repeat Current File",
-                                         help: "Repeat current file")
+                                         accessibilityLabel: "Repeat one",
+                                         help: "Repeat one")
         }
 
         updatePrefixButtons()
@@ -304,7 +329,7 @@ final class BottomRailView: NSView {
         let label = isBookmarked ? "Remove Bookmark" : "Bookmark"
         bookmarkButton.configureSymbol(symbol,
                                        accessibilityLabel: label,
-                                       help: "Bookmark (B)")
+                                       help: ShortcutHint.title("Bookmark", for: .toggleBookmark))
         bookmarkButton.setAccessibilityValue(isBookmarked ? "bookmarked" : "not bookmarked")
     }
 
@@ -426,19 +451,19 @@ final class BottomRailView: NSView {
 
         configure(queueButton, symbol: "square.split.2x1", label: "Toggle Queue Page", help: "Toggle Queue Page", identifier: "player.rail.queue", action: #selector(queueTapped), style: .utility)
         updatePrefixButtonLabels()
-        configure(dPrefixButton, symbol: nil, label: "Apply Primary Custom Prefix", help: "Rename: apply primary custom prefix (N)", identifier: "player.rail.primaryPrefix", action: #selector(dPrefixTapped), style: .prefixPrimary, title: dPrefixButton.title)
-        configure(secondaryPrefixButton, symbol: nil, label: "Apply Secondary Custom Prefix", help: "Rename: apply secondary custom prefix (M)", identifier: "player.rail.secondaryPrefix", action: #selector(secondaryPrefixTapped), style: .prefixSecondary, title: secondaryPrefixButton.title)
+        configure(dPrefixButton, symbol: nil, label: "Apply Primary Custom Prefix", help: ShortcutHint.title("Rename: apply primary custom prefix", for: .togglePrimaryPrefix), identifier: "player.rail.primaryPrefix", action: #selector(dPrefixTapped), style: .prefixPrimary, title: dPrefixButton.title)
+        configure(secondaryPrefixButton, symbol: nil, label: "Apply Secondary Custom Prefix", help: ShortcutHint.title("Rename: apply secondary custom prefix", for: .toggleSecondaryPrefix), identifier: "player.rail.secondaryPrefix", action: #selector(secondaryPrefixTapped), style: .prefixSecondary, title: secondaryPrefixButton.title)
         configure(rewindButton, symbol: "gobackward.10", label: "Rewind", help: "Rewind", identifier: "player.rail.rewind", action: #selector(rewindTapped))
-        configure(prevButton, symbol: "backward.end.fill", label: "Previous File", help: "Previous file (Z)", identifier: "player.rail.previous", action: #selector(prevTapped))
-        configure(playPauseButton, symbol: "play.fill", label: "Play or Pause", help: "Play / Pause (Space)", identifier: "player.rail.playPause", action: #selector(playPauseTapped), style: .emphasized, primary: true)
-        configure(nextButton, symbol: "forward.end.fill", label: "Next File", help: "Next file (X)", identifier: "player.rail.next", action: #selector(nextTapped))
+        configure(prevButton, symbol: "backward.end.fill", label: "Previous File", help: ShortcutHint.title("Previous file", for: .previousItem), identifier: "player.rail.previous", action: #selector(prevTapped))
+        configure(playPauseButton, symbol: "play.fill", label: "Play or Pause", help: ShortcutHint.title("Play / Pause", for: .playPause), identifier: "player.rail.playPause", action: #selector(playPauseTapped), style: .emphasized, primary: true)
+        configure(nextButton, symbol: "forward.end.fill", label: "Next File", help: ShortcutHint.title("Next file", for: .nextItem), identifier: "player.rail.next", action: #selector(nextTapped))
         configure(forwardButton, symbol: "goforward.10", label: "Skip Forward", help: "Skip Forward", identifier: "player.rail.forward", action: #selector(forwardTapped))
         configure(volumeButton, symbol: "speaker.wave.2.fill", label: "Mute or Unmute", help: "Mute / Unmute", identifier: "player.rail.volume", action: #selector(volumeTapped))
         configure(shuffleButton, symbol: "shuffle", label: "Shuffle", help: "Shuffle", identifier: "player.rail.shuffle", action: #selector(shuffleTapped))
-        configure(repeatButton, symbol: "repeat", label: "Repeat Current File", help: "Repeat current file", identifier: "player.rail.repeatOne", action: #selector(repeatTapped))
-        configure(bookmarkButton, symbol: "bookmark", label: "Bookmark", help: "Bookmark (B)", identifier: "player.rail.bookmark", action: #selector(bookmarkTapped), style: .bookmark)
+        configure(repeatButton, symbol: "repeat", label: "Repeat one", help: "Repeat one", identifier: "player.rail.repeatOne", action: #selector(repeatTapped))
+        configure(bookmarkButton, symbol: "bookmark", label: "Bookmark", help: ShortcutHint.title("Bookmark", for: .toggleBookmark), identifier: "player.rail.bookmark", action: #selector(bookmarkTapped), style: .bookmark)
         configure(moreButton, symbol: "ellipsis", label: "More Actions", help: "More actions overflow menu", identifier: "player.rail.more", action: #selector(moreTapped))
-        configure(settingsButton, symbol: "gearshape", label: "Settings", help: "Settings (⌘,)", identifier: "player.rail.settings", action: #selector(settingsTapped))
+        configure(settingsButton, symbol: "gearshape", label: "Settings", help: ShortcutHint.title("Settings", for: .openSettings), identifier: "player.rail.settings", action: #selector(settingsTapped))
         configure(fullscreenButton, symbol: "arrow.up.left.and.arrow.down.right", label: "Toggle Fullscreen", help: "Toggle Fullscreen", identifier: "player.rail.fullscreen", action: #selector(fullscreenTapped))
 
         for label in [elapsedLabel, remainingLabel] {
@@ -575,7 +600,7 @@ final class BottomRailView: NSView {
             playPauseButton.configureSymbol(playSymbol,
                                             primary: true,
                                             accessibilityLabel: imageModeIsPlaying ? "Pause \(mediaKind)" : "Resume \(mediaKind)",
-                                            help: "Play / Pause (Space)")
+                                            help: ShortcutHint.title("Play / Pause", for: .playPause))
         }
         playPauseButton.setAccessibilityValue(imageModeIsPlaying ? "playing" : "paused")
         if !isScrubbing {
@@ -608,13 +633,13 @@ final class BottomRailView: NSView {
         repeatButton.isEnabled = true
         let repeatActive = controller?.isRepeatOne ?? false
         repeatButton.isToggled = repeatActive
-        repeatButton.setAccessibilityValue(repeatButton.isToggled ? "Repeat One on" : "Repeat One off")
+        repeatButton.setAccessibilityValue(repeatButton.isToggled ? "Repeat one on" : "Repeat one off")
         let repeatSymbol = repeatActive ? "repeat.1" : "repeat"
         if repeatSymbol != cachedRepeatSymbol {
             cachedRepeatSymbol = repeatSymbol
             repeatButton.configureSymbol(repeatSymbol,
-                                         accessibilityLabel: "Repeat Current File",
-                                         help: "Repeat current file")
+                                         accessibilityLabel: "Repeat one",
+                                         help: "Repeat one")
         }
         updatePrefixButtons()
         updateBookmarkButtonState()
@@ -745,7 +770,7 @@ final class BottomRailView: NSView {
             addItem(title: "Shuffle",   action: .shuffle,   isOn: shuffleOn,    isEnabled: shuffleEnabled)
         }
         if repeatButton.isHidden {
-            addItem(title: "Replay",    action: .replay,    isOn: isRepeat,     isEnabled: true)
+            addItem(title: "Repeat one", action: .replay, isOn: isRepeat, isEnabled: true)
         }
         if bookmarkButton.isHidden {
             addItem(title: "Bookmark",  action: .bookmark,  isOn: isBookmarked, isEnabled: hasItem)

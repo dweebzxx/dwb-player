@@ -182,7 +182,7 @@ final class TransportControlsView: NSView {
         shuffleButton.toolTip = "Shuffle"
 
         makeButton(repeatButton,    symbol: "repeat",                              size: 11, action: #selector(repeatTapped))
-        repeatButton.toolTip = "Repeat current file"
+        repeatButton.toolTip = "Repeat one"
 
         // Time labels
         for label in [elapsedLabel, remainingLabel] {
@@ -230,7 +230,7 @@ final class TransportControlsView: NSView {
         volumeButton.toolTip = "Mute / Unmute"
 
         makeButton(bookmarkButton, symbol: "bookmark", size: 11, action: #selector(bookmarkTapped))
-        bookmarkButton.toolTip = "Bookmark (B)"
+        bookmarkButton.toolTip = ShortcutHint.title("Bookmark", for: .toggleBookmark)
         bookmarkButton.setAccessibilityLabel("Bookmark")
 
         makeButton(settingsButton, symbol: "gearshape", size: 11, action: #selector(settingsTapped))
@@ -251,7 +251,7 @@ final class TransportControlsView: NSView {
         dPrefixVideoPageButton.layer?.borderWidth     = 1
         dPrefixVideoPageButton.layer?.borderColor     = DWBColor.orangeFillDark.cgColor
         dPrefixVideoPageButton.contentTintColor       = PlayerTheme.current.markerPrimary
-        dPrefixVideoPageButton.toolTip = "Rename: apply custom prefix (N)"
+        dPrefixVideoPageButton.toolTip = ShortcutHint.title("Rename: apply custom prefix", for: .togglePrimaryPrefix)
         dPrefixVideoPageButton.setAccessibilityLabel("Apply custom prefix to current file")
         dPrefixVideoPageButton.title = "x_"
         dPrefixVideoPageButton.font = .monospacedSystemFont(ofSize: 10, weight: .semibold)
@@ -276,6 +276,18 @@ final class TransportControlsView: NSView {
             name: .skipDurationChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShortcutsChange),
+            name: ShortcutRegistry.didChangeNotification,
+            object: nil
+        )
+    }
+
+    /// A shortcut changed: the tooltips that name a key follow it.
+    @objc private func handleShortcutsChange() {
+        bookmarkButton.toolTip = ShortcutHint.title("Bookmark", for: .toggleBookmark)
+        dPrefixVideoPageButton.toolTip = ShortcutHint.title("Rename: apply custom prefix", for: .togglePrimaryPrefix)
     }
 
     @objc private func dPrefixVideoPageTapped() {

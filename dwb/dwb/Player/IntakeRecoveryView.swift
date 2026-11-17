@@ -294,7 +294,7 @@ final class IntakeRecoveryView: NSView {
     private func accessibilityHelp(for action: MediaIntakeRecoveryAction) -> String {
         switch action {
         case .addMedia: return "Choose local files or folders to add"
-        case .openAcceptSettings: return "Open the Accept media type settings"
+        case .openAcceptSettings: return "Open Queue & Files settings to change accepted media."
         case .retryRescan: return "Retry scanning the source folder"
         case .revealSource: return "Reveal the source folder in Finder"
         case .locateSource: return "Choose the source folder again"

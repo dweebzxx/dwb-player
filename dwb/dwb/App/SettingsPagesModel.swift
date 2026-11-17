@@ -20,19 +20,19 @@ enum SettingsPages {
     static let all: [Page] = [
         Page(name: "Playback",
              identifier: "playback",
-             description: "How files play, and which media types the queue accepts."),
-        Page(name: "Controls",
+             description: "Video playback, image timing, and GIF loops."),
+        Page(name: "Appearance & Controls",
              identifier: "controls",
-             description: "How the playback bar behaves and which buttons it shows, plus the player window."),
+             description: "Customize playback controls and window appearance."),
         Page(name: "Queue & Files",
              identifier: "queueFiles",
-             description: "One-click prefix rename, the primary and secondary prefixes, and how the Queue Page opens."),
+             description: "Choose accepted media, queue behavior, and filename prefixes."),
         Page(name: "Shortcuts",
              identifier: "shortcuts",
-             description: "Every keyboard shortcut, grouped by task. Hover a row to see its keys. This page is read-only."),
+             description: "Find and customize keyboard shortcuts for this app."),
         Page(name: "Advanced",
              identifier: "advanced",
-             description: "The debug console, clearing bookmarks, and restoring default settings."),
+             description: "Diagnostics, bookmarks, and default settings."),
         Page(name: "About",
              identifier: "about",
              description: "Version, build, license, and project links.")
@@ -52,5 +52,88 @@ enum SettingsPages {
         guard let position = order.firstIndex(of: index) else { return nil }
         let target = position + offset
         return order.indices.contains(target) ? order[target] : nil
+    }
+}
+
+// MARK: - Playback page: number fields over fixed choices
+
+/// The choices behind a Settings number field (image duration, GIF loops). The field is
+/// editable, but only the listed choices are ever stored: a typed value snaps to the nearest
+/// choice (the smaller one on a tie) and the stepper moves one choice at a time.
+/// Pure values, no AppKit.
+enum SettingsNumericChoices {
+    /// Reads what the user typed. Returns nil when it is not a plain number, so the caller
+    /// restores the stored value. A comma counts as the decimal point when there is no dot.
+    static func parse(_ text: String) -> Double? {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if !trimmed.contains("."), trimmed.filter({ $0 == "," }).count == 1 {
+            trimmed = trimmed.replacingOccurrences(of: ",", with: ".")
+        }
+        var body = Substring(trimmed)
+        if let first = body.first, first == "-" || first == "+" { body = body.dropFirst() }
+        guard !body.isEmpty,
+              body.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }),
+              body.filter({ $0 == "." }).count <= 1,
+              let value = Double(trimmed), value.isFinite else { return nil }
+        return value
+    }
+
+    /// The choice nearest to `value`. A value below the first choice gives the first, above
+    /// the last gives the last, and an exact tie gives the smaller choice.
+    static func nearest(to value: Double, in choices: [Double]) -> Double? {
+        var best: Double?
+        for choice in choices.sorted() {
+            guard let current = best else { best = choice; continue }
+            if abs(choice - value) < abs(current - value) { best = choice }
+        }
+        return best
+    }
+
+    /// The choice one step from `value` (`direction` > 0 up, < 0 down), staying at the end.
+    static func stepped(from value: Double, direction: Int, in choices: [Double]) -> Double? {
+        let sorted = choices.sorted()
+        guard let current = nearest(to: value, in: sorted),
+              let index = sorted.firstIndex(of: current) else { return nil }
+        let target = direction > 0 ? min(index + 1, sorted.count - 1) : direction < 0 ? max(index - 1, 0) : index
+        return sorted[target]
+    }
+
+    /// The text shown in the field: `0.5`, `0.75`, `1`, `10`.
+    static func displayText(_ value: Double) -> String {
+        String(format: "%g", value)
+    }
+}
+
+// MARK: - Appearance & Controls page: dependent row
+
+/// Hide title bar and Automatically hide title bar. While Hide title bar is on, the
+/// automatic option is disabled but keeps its saved value; turning Hide title bar off
+/// enables it again with that value. Pure values, no AppKit.
+enum SettingsTitlebarDependency {
+    struct RowState: Equatable {
+        /// Whether the checkbox accepts clicks.
+        let isEnabled: Bool
+        /// The checkbox state shown: always the saved value.
+        let isChecked: Bool
+    }
+
+    static func autoHideRowState(hideTitlebar: Bool, autoHideTitlebar: Bool) -> RowState {
+        RowState(isEnabled: !hideTitlebar, isChecked: autoHideTitlebar)
+    }
+
+    static func autoHideMenuState(hideTitlebar: Bool, autoHideTitlebar: Bool) -> RowState {
+        autoHideRowState(hideTitlebar: hideTitlebar, autoHideTitlebar: autoHideTitlebar)
+    }
+}
+
+// MARK: - Playback page: speed popup titles
+
+/// Titles of the Playback speed popup in Settings (`0.25×`, `1.00× (Normal)`). The Playback
+/// Speed menu keeps its own titles (`0.25x`, `1.00x Normal`).
+enum SettingsPlaybackSpeedTitle {
+    static func title(rate: Float, isNormal: Bool) -> String {
+        let base = String(format: "%.2f\u{00D7}", rate)
+        return isNormal ? base + " (Normal)" : base
     }
 }

@@ -7,15 +7,22 @@ import AppKit
 
 // MARK: - Shared host
 
-private final class DWBSheetPanel: NSPanel {
+final class DWBSheetPanel: NSPanel {
     var onCancel: (() -> Void)?
+    /// Runs before the window looks for key equivalents. Return true to claim the key press, so
+    /// no menu item and no button sees it. Nil for the rename sheets.
+    var keyEquivalentHook: ((NSEvent) -> Bool)?
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onCancel?() }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let keyEquivalentHook, keyEquivalentHook(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// `surfaceElevated` with a 1 pt `border` on the left, bottom and right and a radius of 10
 /// on the bottom corners only: the top edge meets the title bar.
-private final class SheetChromeView: NSView {
+final class SheetChromeView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         DWBAppearance.observe(self, selector: #selector(appearanceChanged))
@@ -69,7 +76,7 @@ private final class StageDimView: NSView {
     override func mouseDown(with event: NSEvent) {}
 }
 
-private final class DWBSheetHost {
+final class DWBSheetHost {
     private static var active: [DWBSheetHost] = []
 
     let panel: DWBSheetPanel
@@ -81,7 +88,7 @@ private final class DWBSheetHost {
 
     /// `content` carries a stack pinned to its edges, so `fittingSize.height` is the sheet
     /// height (the same sizing as `DWBConfirmSheet`).
-    fileprivate init(content: SheetChromeView, width: CGFloat, title: String) {
+    init(content: SheetChromeView, width: CGFloat, title: String) {
         content.widthAnchor.constraint(equalToConstant: width).isActive = true
         content.layoutSubtreeIfNeeded()
         let size = NSSize(width: width, height: ceil(content.fittingSize.height))
@@ -149,7 +156,7 @@ private final class DWBSheetHost {
 
 // MARK: - Labels
 
-private func sheetTitleLabel(_ text: String) -> NSTextField {
+func sheetTitleLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = .systemFont(ofSize: 13.5, weight: .semibold)
     label.textColor = DWBColor.textPrimary
@@ -158,7 +165,7 @@ private func sheetTitleLabel(_ text: String) -> NSTextField {
     return label
 }
 
-private func sheetCaptionLabel(width: CGFloat) -> NSTextField {
+func sheetCaptionLabel(width: CGFloat) -> NSTextField {
     let label = NSTextField(wrappingLabelWithString: "")
     label.font = .systemFont(ofSize: 11.5)
     label.textColor = DWBAppearance.shared.textSecondary
@@ -169,9 +176,9 @@ private func sheetCaptionLabel(width: CGFloat) -> NSTextField {
     return label
 }
 
-private let sheetPadding = NSEdgeInsets(top: 18, left: 20, bottom: 16, right: 20)
+let sheetPadding = NSEdgeInsets(top: 18, left: 20, bottom: 16, right: 20)
 
-private func pin(_ stack: NSStackView, in content: NSView) {
+func pin(_ stack: NSStackView, in content: NSView) {
     stack.translatesAutoresizingMaskIntoConstraints = false
     content.addSubview(stack)
     NSLayoutConstraint.activate([
@@ -182,7 +189,7 @@ private func pin(_ stack: NSStackView, in content: NSView) {
     ])
 }
 
-private func buttonRow(_ cancel: DWBButton, _ confirm: DWBButton) -> NSStackView {
+func buttonRow(_ cancel: DWBButton, _ confirm: DWBButton) -> NSStackView {
     let spacer = NSView()
     spacer.translatesAutoresizingMaskIntoConstraints = false
     let row = NSStackView(views: [spacer, cancel, confirm])

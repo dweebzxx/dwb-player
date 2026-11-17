@@ -80,6 +80,15 @@ enum SettingsDefaultsRegistry {
         return defaults
     }
 
+    /// "Restore Default Settings…": every preference returns to its default, and the
+    /// shortcut overrides are removed with them.
+    static func restoreAll(in defaults: UserDefaults = .standard, reduceMotionDefault: Bool) {
+        for (key, value) in defaultValues(reduceMotionDefault: reduceMotionDefault) {
+            defaults.set(value, forKey: key)
+        }
+        ShortcutOverrideStore(defaults: defaults).clear()
+    }
+
     static func register(defaults: UserDefaults = .standard, reduceMotionDefault: Bool) {
         defaults.register(defaults: defaultValues(reduceMotionDefault: reduceMotionDefault))
     }

@@ -1,10 +1,7 @@
 import Foundation
 
-/// The data behind Settings > Shortcuts: every shortcut player has, grouped by task,
-/// plus the search filter and the keyboard-map layout. Pure values, no views.
-///
-/// Titles and key text are the app's existing copy, regrouped. Only shortcuts that
-/// exist in player are listed.
+/// The data behind Settings > Shortcuts: the rows of the command table (`ShortcutCommands.swift`)
+/// grouped by task, plus the search filter and the keyboard-map layout. Pure values, no views.
 
 enum ShortcutTone: Equatable {
     case accent
@@ -12,22 +9,30 @@ enum ShortcutTone: Equatable {
     case markerSecondary
 }
 
+/// One row on the page: a command with the keys that run it now.
 struct ShortcutEntry: Equatable {
+    let id: ShortcutCommandID
     let action: String
-    /// One entry per key cap shown on the row (for example `["←", "⌥←"]`).
-    let keys: [String]
+    /// The keys in assignment order, one key cap each.
+    let keys: [ShortcutKey]
+    /// Context text shown next to the action.
+    let note: String?
+    let isEditable: Bool
     var tone: ShortcutTone = .accent
 
-    init(_ action: String, _ keys: String, tone: ShortcutTone = .accent) {
-        self.action = action
-        self.keys = keys.components(separatedBy: " / ")
-        self.tone = tone
+    init(command: ShortcutCommand, keys: [ShortcutKey]) {
+        self.id = command.id
+        self.action = command.name
+        self.keys = keys
+        self.note = command.note
+        self.isEditable = command.isEditable
+        self.tone = command.tone
     }
 
+    var keyTexts: [String] { keys.map(\.text) }
+
     /// Keys of this entry that sit on the keyboard map (unmodified keys only).
-    var mapKeys: [String] {
-        keys.filter { ShortcutKeyboardLayout.allKeys.contains($0) }
-    }
+    var mapKeys: [String] { keys.compactMap(\.mapLabel) }
 }
 
 struct ShortcutGroup: Equatable {
@@ -67,70 +72,46 @@ enum ShortcutKeyboardLayout {
 }
 
 enum ShortcutsCatalog {
-    static let groups: [ShortcutGroup] = [
-        ShortcutGroup("Playback", items: [
-            ShortcutEntry("Play / Pause", "Space"),
-            ShortcutEntry("Rewind by skip duration", "← / ⌥←"),
-            ShortcutEntry("Forward by skip duration", "→ / ⌥→"),
-            ShortcutEntry("Volume Up", "↑ / ⌘↑"),
-            ShortcutEntry("Volume Down", "↓ / ⌘↓"),
-            ShortcutEntry("Shuffle", "⌥⌘S"),
-            ShortcutEntry("Endless Shuffle", "⌥⌘E"),
-            ShortcutEntry("Repeat One", "⌥⌘R")
-        ]),
-        ShortcutGroup("Navigation", items: [
-            ShortcutEntry("Previous Item", ","),
-            ShortcutEntry("Next Item", ".")
-        ]),
-        ShortcutGroup("File markers", items: [
-            ShortcutEntry("Primary prefix (add / remove / replace)", "N", tone: .markerPrimary),
-            ShortcutEntry("Secondary prefix (add / remove / replace)", "M", tone: .markerSecondary),
-            ShortcutEntry("Rename current file…", "R"),
-            ShortcutEntry("Undo last prefix change", "⌘Z")
-        ]),
-        ShortcutGroup("Queue & window", items: [
-            ShortcutEntry("Open File", "⌘O"),
-            ShortcutEntry("New Window", "⌘N"),
-            ShortcutEntry("Four Window Grid", "⌘4"),
-            ShortcutEntry("Fit", "⌘1"),
-            ShortcutEntry("Fill", "⌘2"),
-            ShortcutEntry("Stretch", "⌘3"),
-            ShortcutEntry("Minimize", "⌘M"),
-            ShortcutEntry("Reveal in Finder", "⇧⌘R"),
-            ShortcutEntry("Clear Queue", "⇧⌘⌫"),
-            ShortcutEntry("Remove selected queue rows", "Delete / Forward Delete"),
-            ShortcutEntry("Open Settings", "⌘,"),
-            ShortcutEntry("Move Settings sidebar selection", "↑ / ↓"),
-            ShortcutEntry("Quit dwb player", "⌘Q")
-        ]),
-        ShortcutGroup("Skip & audio sync", appLabel: "dwb player", items: [
-            ShortcutEntry("10 seconds", "1"),
-            ShortcutEntry("30 seconds", "3"),
-            ShortcutEntry("60 seconds", "6"),
-            ShortcutEntry("3 minutes", "9"),
-            ShortcutEntry("Bookmark Current Item", "B"),
-            ShortcutEntry("Advance Audio (Play Sooner)", "[ / ⌘["),
-            ShortcutEntry("Delay Audio (Play Later)", "] / ⌘]"),
-            ShortcutEntry("Reset Audio Sync", "\\ / ⌘\\")
-        ])
-    ]
+    /// The rows of Settings > Shortcuts, grouped by task, from the command table and the
+    /// active keys. Groups with no command are left out.
+    static func groups(bindings: ShortcutBindings = ShortcutRegistry.shared.bindings) -> [ShortcutGroup] {
+        ShortcutGroupID.allCases.compactMap { group in
+            let items = bindings.commands.filter { $0.group == group }.map {
+                ShortcutEntry(command: $0, keys: bindings.activeKeys(for: $0.id))
+            }
+            return items.isEmpty ? nil : ShortcutGroup(group.title, appLabel: group.appLabel, items: items)
+        }
+    }
+
+    /// The one place that answers "which keys run this action now": the key texts of the
+    /// command table's active keys, in assignment order.
+    static func currentKeys(for id: ShortcutCommandID,
+                            in bindings: ShortcutBindings = ShortcutRegistry.shared.bindings) -> [String] {
+        bindings.activeKeyTexts(for: id)
+    }
 }
 
 enum ShortcutsSearch {
-    /// Keeps the rows whose action name or key text contains the query, ignoring case,
-    /// and drops groups left empty. An empty query keeps everything.
+    /// Keeps the rows that match the query, ignoring case, and drops groups left empty. A
+    /// group whose title matches keeps all its rows. An empty query keeps everything.
     static func filter(_ groups: [ShortcutGroup], query: String) -> [ShortcutGroup] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return groups }
         return groups.compactMap { group in
+            if group.title.lowercased().contains(needle) { return group }
             let items = group.items.filter { matches($0, needle: needle) }
             return items.isEmpty ? nil : ShortcutGroup(group.title, appLabel: group.appLabel, items: items)
         }
     }
 
+    /// A row matches on its action name, its keys (the symbols, such as `⌘`, and the spoken
+    /// words, such as "command"), and its context text.
     static func matches(_ entry: ShortcutEntry, needle: String) -> Bool {
-        let haystack = ([entry.action] + entry.keys).joined(separator: " ").lowercased()
-        return haystack.contains(needle)
+        var parts = [entry.action]
+        parts += entry.keys.map(\.text)
+        parts += entry.keys.map(\.spokenText)
+        if let note = entry.note { parts.append(note) }
+        return parts.joined(separator: " ").lowercased().contains(needle)
     }
 }
 
@@ -147,5 +128,38 @@ enum ShortcutKeyMap {
             }
         }
         return result
+    }
+}
+
+/// The shortcut line under a prefix field in Settings > Queue & Files.
+enum PrefixShortcutText {
+    /// One key: `Shortcut: N`. Several: `Shortcuts: N, H`, in assignment order. None:
+    /// `Shortcut: Unassigned`.
+    static func text(keys: [String]) -> String {
+        switch keys.count {
+        case 0:  return "Shortcut: Unassigned"
+        case 1:  return "Shortcut: \(keys[0])"
+        default: return "Shortcuts: " + keys.joined(separator: ", ")
+        }
+    }
+
+    static func primary(in bindings: ShortcutBindings = ShortcutRegistry.shared.bindings) -> String {
+        text(keys: ShortcutsCatalog.currentKeys(for: .togglePrimaryPrefix, in: bindings))
+    }
+
+    static func secondary(in bindings: ShortcutBindings = ShortcutRegistry.shared.bindings) -> String {
+        text(keys: ShortcutsCatalog.currentKeys(for: .toggleSecondaryPrefix, in: bindings))
+    }
+}
+
+/// Tooltips and help text that name a shortcut: `Bookmark (B)`. They read the active key of
+/// the command, so a changed shortcut shows in them.
+enum ShortcutHint {
+    /// `title` with the first active key of `id` in parentheses; just `title` when the
+    /// command has no key.
+    static func title(_ title: String, for id: ShortcutCommandID,
+                      in bindings: ShortcutBindings = ShortcutRegistry.shared.bindings) -> String {
+        guard let key = bindings.primaryKeyText(for: id) else { return title }
+        return "\(title) (\(key))"
     }
 }

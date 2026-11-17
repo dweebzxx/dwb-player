@@ -61,6 +61,11 @@ enum PlayerWindowTargeting {
         return "Applies to \u{201C}\(middleTruncated(title, maxLength: maxHelperNameLength))\u{201D}."
     }
 
+    /// The Playback speed row's text: the speed applies to video only, then the target.
+    static func speedHelperText(targetTitle: String?) -> String {
+        "Affects video only. " + settingsHelperText(targetTitle: targetTitle)
+    }
+
     static func middleTruncated(_ text: String, maxLength: Int) -> String {
         guard maxLength > 1, text.count > maxLength else { return text }
         let kept = maxLength - 1

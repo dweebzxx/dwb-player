@@ -316,6 +316,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         frontPlayerWindowController?.undoLastMarkerRename()
     }
 
+    @objc func redoTyping(_ sender: Any) {
+        activeTextEditor()?.undoManager?.redo()
+    }
+
     @objc func removeCurrentQueueItem(_ sender: Any) {
         frontPlayerWindowController?.removeCurrentQueueItem()
     }
@@ -429,9 +433,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         switch menuItem.tag {
         case 50:
+            if let textEditor = activeTextEditor() {
+                menuItem.title = "Undo"
+                return textEditor.undoManager?.canUndo == true
+            }
             let canUndoMarkerRename = controller?.canUndoMarkerRename == true
             menuItem.title = canUndoMarkerRename ? "Undo Prefix Change" : "Undo"
-            return canUndoMarkerRename || (activeTextEditor()?.undoManager?.canUndo == true)
+            return canUndoMarkerRename
+        case 51:
+            return activeTextEditor()?.undoManager?.canRedo == true
         case 1:
             menuItem.state = frontPlayerWindowController?.scaleMode == .fit     ? .on : .off
         case 2:
@@ -441,7 +451,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         case 30: // Keep Window On Top
             menuItem.state = frontPlayerWindowController?.isKeepAtTop == true ? .on : .off
         case 31: // Auto-hide Titlebar
-            menuItem.state = SettingsWindowController.isAutoHideTitlebarEnabled() ? .on : .off
+            let row = SettingsTitlebarDependency.autoHideMenuState(
+                hideTitlebar: SettingsWindowController.isCompleteVideoWindowModeEnabled(),
+                autoHideTitlebar: SettingsWindowController.isAutoHideTitlebarEnabled())
+            menuItem.state = row.isChecked ? .on : .off
+            return row.isEnabled
         case 41: // Reset Audio Sync — only actionable when an offset is actually set
             return (frontPlayerWindowController?.currentAudioDelayMs ?? 0) != 0
         default:
@@ -493,6 +507,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
             name: .skipDurationChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutsDidChange),
+            name: ShortcutRegistry.didChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func skipDurationDidChange() {
@@ -507,7 +527,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
     // MARK: - Main menu (programmatic)
 
-    private func buildMainMenu() {
+    /// The menu items that carry a key from the command table, by command.
+    private var shortcutMenuItems: [ShortcutCommandID: NSMenuItem] = [:]
+    private var shortcutAliasItems: [ShortcutCommandID: [NSMenuItem]] = [:]
+
+    /// Gives `item` the active menu key of `id`. The key comes from the command table, so a
+    /// changed shortcut shows in the menu (`shortcutsDidChange`).
+    private func bindShortcut(_ item: NSMenuItem, _ id: ShortcutCommandID) {
+        shortcutMenuItems[id] = item
+        item.applyShortcut(for: id)
+    }
+
+    @objc private func shortcutsDidChange() {
+        refreshShortcutMenuItems(bindings: ShortcutRegistry.shared.bindings)
+    }
+
+    func refreshShortcutMenuItems(bindings: ShortcutBindings) {
+        for (id, item) in shortcutMenuItems {
+            shortcutAliasItems[id] = ShortcutMenuKeyInstaller.apply(
+                to: item, id: id, bindings: bindings, removing: shortcutAliasItems[id] ?? [])
+        }
+    }
+
+    /// Runs the menu item of `id` for a page key the user gave it, when the item is enabled.
+    func performMenuCommand(_ id: ShortcutCommandID) {
+        guard let item = shortcutMenuItems[id], let action = item.action, validateMenuItem(item) else { return }
+        NSApp.sendAction(action, to: item.target, from: item)
+    }
+
+    func buildMainMenu() {
         let mainMenu = NSMenu()
 
         // ── App menu ────────────────────────────────────────────────────────
@@ -523,14 +571,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let settingsItem = NSMenuItem(title: "Settings\u{2026}",
                                       action: #selector(openSettings(_:)),
-                                      keyEquivalent: ",")
+                                      keyEquivalent: "")
         settingsItem.target = self
+        bindShortcut(settingsItem, .openSettings)
         appMenu.addItem(settingsItem)
 
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit dwb player",
-                        action: #selector(NSApplication.terminate(_:)),
-                        keyEquivalent: "q")
+        let quitItem = appMenu.addItem(withTitle: "Quit dwb player",
+                                       action: #selector(NSApplication.terminate(_:)),
+                                       keyEquivalent: "")
+        bindShortcut(quitItem, .quit)
 
         // ── File menu ───────────────────────────────────────────────────────
         let fileItem = NSMenuItem()
@@ -540,17 +590,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let openItem = NSMenuItem(title: "Open\u{2026}",
                                   action: #selector(openFile(_:)),
-                                  keyEquivalent: "o")
+                                  keyEquivalent: "")
         openItem.target = self
+        bindShortcut(openItem, .openFile)
         fileMenu.addItem(openItem)
 
         fileMenu.addItem(.separator())
 
         let revealItem = NSMenuItem(title: "Reveal in Finder",
                                     action: #selector(revealInFinder(_:)),
-                                    keyEquivalent: "r")
-        revealItem.keyEquivalentModifierMask = [.command, .shift]
+                                    keyEquivalent: "")
         revealItem.target = self
+        bindShortcut(revealItem, .revealInFinder)
         revealItem.tag    = 10
         fileMenu.addItem(revealItem)
 
@@ -558,6 +609,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
                                     action: #selector(renameCurrentFile(_:)),
                                     keyEquivalent: "")
         renameItem.target = self
+        bindShortcut(renameItem, .renameFile)
         renameItem.tag    = 11
         fileMenu.addItem(renameItem)
 
@@ -568,13 +620,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         removeItem.tag    = 12
         fileMenu.addItem(removeItem)
 
-        // AppKit represents Delete as NSDeleteCharacter for menu shortcuts.
-        // The visible shortcut remains Command+Shift+Delete.
         let deleteAllItem = NSMenuItem(title: "Clear Queue",
                                        action: #selector(deleteAllQueueItems(_:)),
-                                       keyEquivalent: String(UnicodeScalar(NSDeleteCharacter)!))
-        deleteAllItem.keyEquivalentModifierMask = [.command, .shift]
+                                       keyEquivalent: "")
         deleteAllItem.target = self
+        bindShortcut(deleteAllItem, .clearQueue)
         deleteAllItem.tag    = 13
         fileMenu.addItem(deleteAllItem)
 
@@ -582,39 +632,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let newWindowItem = NSMenuItem(title: "New Window",
                                        action: #selector(newWindow(_:)),
-                                       keyEquivalent: "n")
+                                       keyEquivalent: "")
         newWindowItem.target = self
+        bindShortcut(newWindowItem, .newWindow)
         fileMenu.addItem(newWindowItem)
 
         // ── Edit menu ───────────────────────────────────────────────────────
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit")
-        editItem.submenu = editMenu
-
-        let undoItem = NSMenuItem(title: "Undo",
-                                  action: #selector(undoMarkerRename(_:)),
-                                  keyEquivalent: "z")
-        undoItem.keyEquivalentModifierMask = .command
-        undoItem.target = self
-        undoItem.tag = 50
-        editMenu.addItem(undoItem)
-
-        editMenu.addItem(.separator())
-
-        // Standard responder-chain items: nil target, so AppKit sends them to the first
-        // responder (a text field's editor) and enables them only when it can handle them.
-        let copyItem = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        copyItem.keyEquivalentModifierMask = .command
-        editMenu.addItem(copyItem)
-
-        let pasteItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        pasteItem.keyEquivalentModifierMask = .command
-        editMenu.addItem(pasteItem)
-
-        let selectAllItem = NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        selectAllItem.keyEquivalentModifierMask = .command
-        editMenu.addItem(selectAllItem)
+        editItem.submenu = ShortcutEditMenuBuilder.make(
+            undoTarget: self, undoAction: #selector(undoMarkerRename(_:)),
+            redoAction: #selector(redoTyping(_:)), bind: bindShortcut)
 
         // ── Playback menu ───────────────────────────────────────────────────
         let playbackItem = NSMenuItem()
@@ -624,8 +652,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let playPauseItem = NSMenuItem(title: "Play / Pause",
                                        action: #selector(playPause(_:)),
-                                       keyEquivalent: " ")
+                                       keyEquivalent: "")
         playPauseItem.target = self
+        bindShortcut(playPauseItem, .playPause)
         playbackMenu.addItem(playPauseItem)
 
         let stopItem = NSMenuItem(title: "Stop",
@@ -639,18 +668,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         let rewind10Item = NSMenuItem(title: SettingsWindowController.skipActionTitle(isForward: false,
                                                                                      seconds: SettingsWindowController.currentSkipDurationSeconds()),
                                       action: #selector(rewind10(_:)),
-                                      keyEquivalent: String(UnicodeScalar(NSLeftArrowFunctionKey)!))
-        rewind10Item.keyEquivalentModifierMask = .option
+                                      keyEquivalent: "")
         rewind10Item.target = self
+        bindShortcut(rewind10Item, .skipBackward)
         playbackMenu.addItem(rewind10Item)
         self.rewindMenuItem = rewind10Item
 
         let forward10Item = NSMenuItem(title: SettingsWindowController.skipActionTitle(isForward: true,
                                                                                        seconds: SettingsWindowController.currentSkipDurationSeconds()),
                                        action: #selector(forward10(_:)),
-                                       keyEquivalent: String(UnicodeScalar(NSRightArrowFunctionKey)!))
-        forward10Item.keyEquivalentModifierMask = .option
+                                       keyEquivalent: "")
         forward10Item.target = self
+        bindShortcut(forward10Item, .skipForward)
         playbackMenu.addItem(forward10Item)
         self.forwardMenuItem = forward10Item
 
@@ -658,41 +687,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let volUpItem = NSMenuItem(title: "Volume Up",
                                    action: #selector(volumeUp(_:)),
-                                   keyEquivalent: String(UnicodeScalar(NSUpArrowFunctionKey)!))
-        volUpItem.keyEquivalentModifierMask = .command
+                                   keyEquivalent: "")
         volUpItem.target = self
+        bindShortcut(volUpItem, .volumeUp)
         playbackMenu.addItem(volUpItem)
 
         let volDownItem = NSMenuItem(title: "Volume Down",
                                      action: #selector(volumeDown(_:)),
-                                     keyEquivalent: String(UnicodeScalar(NSDownArrowFunctionKey)!))
-        volDownItem.keyEquivalentModifierMask = .command
+                                     keyEquivalent: "")
         volDownItem.target = self
+        bindShortcut(volDownItem, .volumeDown)
         playbackMenu.addItem(volDownItem)
 
         playbackMenu.addItem(.separator())
 
         let shuffleItem = NSMenuItem(title: "Shuffle",
                                      action: #selector(toggleShuffle(_:)),
-                                     keyEquivalent: "s")
-        shuffleItem.keyEquivalentModifierMask = [.command, .option]
+                                     keyEquivalent: "")
         shuffleItem.target = self
+        bindShortcut(shuffleItem, .shuffle)
         shuffleItem.tag = 20
         playbackMenu.addItem(shuffleItem)
 
         let endlessShuffleItem = NSMenuItem(title: "Endless Shuffle",
                                             action: #selector(toggleEndlessShuffle(_:)),
-                                            keyEquivalent: "e")
-        endlessShuffleItem.keyEquivalentModifierMask = [.command, .option]
+                                            keyEquivalent: "")
         endlessShuffleItem.target = self
+        bindShortcut(endlessShuffleItem, .endlessShuffle)
         endlessShuffleItem.tag = 21
         playbackMenu.addItem(endlessShuffleItem)
 
         let repeatOneItem = NSMenuItem(title: "Repeat One",
                                        action: #selector(toggleRepeatOne(_:)),
-                                       keyEquivalent: "r")
-        repeatOneItem.keyEquivalentModifierMask = [.command, .option]
+                                       keyEquivalent: "")
         repeatOneItem.target = self
+        bindShortcut(repeatOneItem, .repeatOne)
         repeatOneItem.tag = 22
         playbackMenu.addItem(repeatOneItem)
 
@@ -715,8 +744,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         // Audio Sync — manual audio/video offset. Compensates for fixed output-device
         // latency (e.g. Bluetooth headphones) by shifting audio earlier/later relative
-        // to video. Also reachable via the "[" / "]" / "\" keys when the video view has
-        // focus (see VideoSurfaceView.keyDown).
+        // to video. Also reachable by the page keys of the command table when the video
+        // or image has focus (see PlayerKeyDispatch).
         let audioSyncItem = NSMenuItem(title: "Audio Sync", action: nil, keyEquivalent: "")
         let audioSyncMenu = NSMenu(title: "Audio Sync")
 
@@ -730,22 +759,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let advanceAudioItem = NSMenuItem(title: "Advance Audio (Play Sooner)",
                                           action: #selector(advanceAudio(_:)),
-                                          keyEquivalent: "[")
+                                          keyEquivalent: "")
         advanceAudioItem.target = self
+        bindShortcut(advanceAudioItem, .advanceAudio)
         audioSyncMenu.addItem(advanceAudioItem)
 
         let delayAudioItem = NSMenuItem(title: "Delay Audio (Play Later)",
                                         action: #selector(delayAudio(_:)),
-                                        keyEquivalent: "]")
+                                        keyEquivalent: "")
         delayAudioItem.target = self
+        bindShortcut(delayAudioItem, .delayAudio)
         audioSyncMenu.addItem(delayAudioItem)
 
         audioSyncMenu.addItem(.separator())
 
         let resetAudioSyncItem = NSMenuItem(title: "Reset Audio Sync",
                                             action: #selector(resetAudioSync(_:)),
-                                            keyEquivalent: "\\")
+                                            keyEquivalent: "")
         resetAudioSyncItem.target = self
+        bindShortcut(resetAudioSyncItem, .resetAudioSync)
         resetAudioSyncItem.tag = 41
         audioSyncMenu.addItem(resetAudioSyncItem)
 
@@ -761,22 +793,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let fitItem = NSMenuItem(title: "Fit",
                                  action: #selector(setScaleFit(_:)),
-                                 keyEquivalent: "1")
+                                 keyEquivalent: "")
         fitItem.target = self
+        bindShortcut(fitItem, .scaleFit)
         fitItem.tag = 1
         videoMenu.addItem(fitItem)
 
         let fillItem = NSMenuItem(title: "Fill",
                                   action: #selector(setScaleFill(_:)),
-                                  keyEquivalent: "2")
+                                  keyEquivalent: "")
         fillItem.target = self
+        bindShortcut(fillItem, .scaleFill)
         fillItem.tag = 2
         videoMenu.addItem(fillItem)
 
         let stretchItem = NSMenuItem(title: "Stretch",
                                      action: #selector(setScaleStretch(_:)),
-                                     keyEquivalent: "3")
+                                     keyEquivalent: "")
         stretchItem.target = self
+        bindShortcut(stretchItem, .scaleStretch)
         stretchItem.tag = 3
         videoMenu.addItem(stretchItem)
 
@@ -785,9 +820,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         mainMenu.addItem(windowItem)
         let windowMenu = NSMenu(title: "Window")
         windowItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Minimize",
-                           action: #selector(NSWindow.performMiniaturize(_:)),
-                           keyEquivalent: "m")
+        let minimizeItem = windowMenu.addItem(withTitle: "Minimize",
+                                              action: #selector(NSWindow.performMiniaturize(_:)),
+                                              keyEquivalent: "")
+        bindShortcut(minimizeItem, .minimize)
         windowMenu.addItem(withTitle: "Zoom",
                            action: #selector(NSWindow.performZoom(_:)),
                            keyEquivalent: "")
@@ -796,9 +832,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
 
         let gridItem = NSMenuItem(title: "Four Window Grid",
                                   action: #selector(fourWindowGrid(_:)),
-                                  keyEquivalent: "4")
-        gridItem.keyEquivalentModifierMask = .command
+                                  keyEquivalent: "")
         gridItem.target = self
+        bindShortcut(gridItem, .fourWindowGrid)
         windowMenu.addItem(gridItem)
 
         windowMenu.addItem(.separator())
@@ -820,6 +856,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
         NSApp.windowsMenu = windowMenu
 
         NSApp.mainMenu = mainMenu
+        shortcutsDidChange()
     }
 
     @objc func toggleKeepAtTop(_ sender: Any) {

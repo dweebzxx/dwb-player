@@ -1,5 +1,42 @@
 import Cocoa
 
+/// Keeps the native search and clear buttons while placing text beyond the search button.
+/// With an un-bezeled NSSearchField, AppKit's default text rect starts under the icon.
+private final class DebugConsoleSearchFieldCell: NSSearchFieldCell {
+    override init(textCell string: String) {
+        super.init(textCell: string)
+        isEditable = true
+        usesSingleLineMode = true
+        isScrollable = true
+        lineBreakMode = .byClipping
+    }
+
+    required init(coder: NSCoder) { fatalError() }
+
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+        let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let textHeight = ceil(font.ascender - font.descender + font.leading)
+        return NSRect(x: rect.minX + 24,
+                      y: rect.minY + floor((rect.height - textHeight) / 2),
+                      width: max(0, rect.width - 48),
+                      height: textHeight)
+    }
+
+    override func drawingRect(forBounds rect: NSRect) -> NSRect { searchTextRect(forBounds: rect) }
+
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText,
+                       delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj,
+                   delegate: delegate, event: event)
+    }
+
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText,
+                         delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: searchTextRect(forBounds: rect), in: controlView, editor: textObj,
+                     delegate: delegate, start: selStart, length: selLength)
+    }
+}
+
 // MARK: - Controller
 
 /// App-wide in-app debug console. Window hidden by default; toggle in Settings > Developer.
@@ -470,6 +507,7 @@ final class DebugConsoleController: NSWindowController {
         let gap:     CGFloat = 8
         let searchW  = W - 10 - gap - catW - gap - lvlW - 10
 
+        searchField.cell = DebugConsoleSearchFieldCell(textCell: "")
         searchField.placeholderString = "Filter…"
         searchField.font = .systemFont(ofSize: 11)
         searchField.isBordered = false
