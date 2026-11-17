@@ -2,6 +2,19 @@
 
 All notable changes to dwb player are recorded here.
 
+## 1.5.3 — 2026-11-17
+
+Build 131.
+
+### Changed
+
+- **Rail Settings button.** When no actions need overflow, the rail shows a Settings gear that opens Settings directly. When actions need overflow, it shows More, with Settings last in the menu.
+- **Overflow menu.** The rail More menu now uses the design system dropdown component.
+
+### Fixed
+
+- Removed an invalid AppKit superclass call that could crash the app when a queue drag ends outside the player. Existing drag cleanup restores row opacity and clears the insertion indicator.
+
 ## 1.5.2 — 2026-11-17
 
 Covers the changes made since 1.5.1: a redesigned Settings window and customizable keyboard shortcuts.

@@ -18,7 +18,7 @@ dwb player is a native Swift/AppKit media player for macOS 13 and newer, built f
 
 It is local-only: no streaming, cloud sync, telemetry, transcoding, or media-library management.
 
-> **Current version:** v1.5.2. See [CHANGELOG.md](CHANGELOG.md) for what is new.
+> **Current version:** v1.5.3 (build 131). See [CHANGELOG.md](CHANGELOG.md) for what is new.
 
 ## Features
 
@@ -40,7 +40,7 @@ It is local-only: no streaming, cloud sync, telemetry, transcoding, or media-lib
 
 **Windows and controls**
 - Multiple independent player windows, each with its own VLCKit player, and a Command-4 Four Window Grid.
-- A unified bottom rail that appears when the mouse moves, with a More menu for actions that do not fit.
+- A unified bottom rail that appears when the mouse moves. A Settings gear opens Settings directly when no actions need overflow; otherwise, More opens a dropdown menu with the overflow actions and Settings.
 - **Picture-in-picture style playback.** Turn on Window > Keep Window On Top for a player window, make it small, and it stays above other windows while you work. The setting is per window, so one window can float while others behave normally. Each window plays its own media, with its own volume, speed, and queue.
 - Hide Title Bar (Complete Video Mode) and optional titlebar auto-hide. Auto-hide is unavailable while the title bar is hidden, in both Settings and the Window menu.
 - A standard Edit menu with Undo, Redo, Cut, Copy, Paste, and Select All for text fields and the rename sheet.
@@ -69,7 +69,7 @@ It is local-only: no streaming, cloud sync, telemetry, transcoding, or media-lib
 
 ## Download
 
-Download `dwb-player-1.5.2-macos.zip` from the [latest release](https://github.com/dweebzxx/dwb-player/releases/latest), unzip it, and move `dwb player.app` to Applications. The app is not notarized, so macOS blocks the first launch: right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "/Applications/dwb player.app"`.
+Download the app ZIP from the [latest release](https://github.com/dweebzxx/dwb-player/releases/latest), unzip it, and move `dwb player.app` to Applications. The app is not notarized, so macOS blocks the first launch: right-click the app and choose Open, or run `xattr -dr com.apple.quarantine "/Applications/dwb player.app"`.
 
 ## Build From Source
 
